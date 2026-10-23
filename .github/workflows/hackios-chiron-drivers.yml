@@ -1,6 +1,9 @@
 name: MIX2 parallel driver source builds
 
 on:
+  push:
+    branches: ['codex/chiron-parallel-drivers']
+    paths: ['.github/workflows/hackios-chiron-drivers.yml']
   workflow_dispatch:
     inputs:
       variants:
@@ -21,7 +24,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: ${{ fromJSON(inputs.variants == 'smp' && '["smp2","smp8"]' || inputs.variants == 'touch' && '["touch"]' || '["touch","smp2","smp8"]') }}
+        variant: ${{ fromJSON(github.event_name == 'push' && '["smp2","smp8"]' || inputs.variants == 'smp' && '["smp2","smp8"]' || inputs.variants == 'touch' && '["touch"]' || '["touch","smp2","smp8"]') }}
     env:
       PORT_WORK: ${{ github.workspace }}/.cache/chiron-drivers
       PORT_EVIDENCE: ${{ github.workspace }}/dist/chiron-drivers
