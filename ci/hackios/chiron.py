@@ -15,6 +15,7 @@ import time
 
 import apply_chiron
 import cloud
+import driver_variants
 import observe_chiron
 
 
@@ -69,6 +70,7 @@ def build_fetch(work, evidence):
 
 
 def images(work, evidence):
+    driver_variants.require_baseline_runtime()
     cloud.images(work, evidence)
     kernel = work / "kernel"
     # The phone starts only this small image. The original big APFS root is
@@ -98,6 +100,7 @@ def images(work, evidence):
 
 
 def qemu(work, evidence):
+    driver_variants.require_baseline_runtime()
     kernel = work / "kernel"
     run = kernel / "qemu/run.sh"
     run.write_text(apply_chiron.replace_once(
@@ -143,6 +146,7 @@ def qemu(work, evidence):
 
 
 def summarize(work, evidence):
+    driver_variants.require_baseline_runtime()
     cloud.summarize(work, evidence)
     text = (evidence / "qemu-serial.log").read_text(errors="replace")
     identity = re.search(r"CurrentEL=1 MIDR=([0-9a-f]+) MMFR0=([0-9a-f]+)", text)

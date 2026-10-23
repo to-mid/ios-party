@@ -1,0 +1,44 @@
+{
+  "schema": "chiron-touch-sources-v1",
+  "hackios_commit": "8e61187098f2c26c5daee8f9f72b6416aa64b9ab",
+  "xnu_tag": "xnu-8796.121.2",
+  "status": "blocked-native-i2c-and-layout-evidence",
+  "pinned_hackios_files": {
+    "redwood_goodix.c": "4be6419b7173bfa3d465938085f911051f83d6d71055c93068582c1ad03f60ae",
+    "redwood_input.c": "c2d9f98a906fb43e2d6cd1639d258379fc356c35e3c8556bcd013e9f12f0ddc9"
+  },
+  "overlay_files": {
+    "chiron_dsx.c": "44cbf2289cb6a966f435aa58aafc426b1ec4ec5c22a86dae9c851096abe1f141",
+    "chiron_dsx.h": "1469fec5a413c96882e574683e0315de197f1cee9f6b51104e5143a2e557c83f",
+    "chiron_xnu.c": "e046fd74d63bfb46919e5b8f7916ef5f29ee9954a7679cf1037046aa8ad58f2e"
+  },
+  "local_evidence_sha256": {
+    "research/artifacts/chiron-live-20261020/runtime-tree.tar": "08e76d50d5b513614203521be6f5eeaa40966e1e24a087ea582ee3fe6e9d7718",
+    "research/artifacts/chiron-live-20261020/i2c-bindings.txt": "68f0c2bbc61265ec5ff6b559ada3b4d086e213d71a456704de2b877de84c099b",
+    "research/artifacts/chiron-live-20261020/input-devices.txt": "a499d01bb67d51c54a0145d234f62992b3c249096da5dddd3d70c053e55b58f1",
+    "research/artifacts/chiron-live-details-20261020/touch-identification.txt": "3eaf1c1f62bd648c79900e96397cbf0a6e9b188ce87c5fc8b325ed01bd66acc9",
+    "/private/tmp/ios-party-research/edk2/Platforms/Msm8998FamilyPkg/Drivers/SynapticsRmi4Dxe/I2cOps.c": "6eb894be1d60b717631946d89b56aeecbdc2471620e55f1ca5153620bb5c207a",
+    "/private/tmp/ios-party-research/edk2/Platforms/Msm8998FamilyPkg/Drivers/SynapticsRmi4Dxe/SynapticsTouchDxe.c": "04199f4dee8f7eba1753103e353723d95e5914a8627dde72540591a22c682df9",
+    "/private/tmp/ios-party-research/edk2/Platforms/Msm8998FamilyPkg/Drivers/SynapticsRmi4Dxe/SynapticsRmi4.h": "1cff59ae1b8b51b4f552342e483ce6ee4ecd11187ea8ba9f1db736a636c09a8c",
+    "/private/tmp/ios-party-research/linux/chiron-msm8998-mtp.dtsi": "134b3d535be53041535ef6fe0a6f9caf6b3035349c40b335914ae3671491738e",
+    "/private/tmp/ios-party-research/linux/msm8998-blsp.dtsi": "a57c3a1f9a71cae08e894add13377d70566cb714adaa160c3380a95365b3897b",
+    "/private/tmp/ios-party-research/linux/chiron-msm8998-v2.1-mtp.dts": "7b87b62fd8a7c8c57b29575f218a27e489a0cb6d921398afcd955420bb1fdb3e",
+    "/private/tmp/ios-party-research/edk2/Platforms/Msm8998FamilyPkg/Drivers/SynapticsRmi4Dxe/SynapticsTouchDevice.c": "50c86083f4349dbc76137811dd7f493edf23cdefb8d903d5e53a32b2716c95cd",
+    "/private/tmp/chiron-hackios-reuse/kernel/xnu/files/bsd/sys/redwood_input.h": "5b00cd093e1b806c300d17f3d2bd0f4fbd41cb266cdf992756d88c5087ab7b02",
+    "/private/tmp/chiron-hackios-reuse/userland/userland/src/inject.c": "7602d0ce95eb32e69ba54717d0ca680354269c2446d7846fc661b656dd99ab9c"
+  },
+  "measured_board": {
+    "bus": 5,
+    "slave_address": 32,
+    "qup_physical": 202870784,
+    "qup_size": 1536,
+    "sda_gpio": 87,
+    "scl_gpio": 88,
+    "reset_gpio": 89,
+    "interrupt_gpio": 125,
+    "interrupt_flags": 8200,
+    "runtime_driver": "synaptics_dsi_force",
+    "firmware_build_id": 2676394,
+    "f12_report_layout_measured": false
+  }
+}

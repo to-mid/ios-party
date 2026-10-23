@@ -4,6 +4,9 @@ test "${GITHUB_ACTIONS:-}" = true
 test "$(uname -s)" = Linux
 WORK=$1
 EVIDENCE=$2
+if [ -n "${HACKIOS_CHIRON_VARIANT:-}" ]; then
+  python3 "$GITHUB_WORKSPACE/ci/hackios/driver_variants.py" validate-build
+fi
 export THEOS="$WORK/theos" JOBS=2
 collect_logs() {
   for log in "$WORK/kernel/xnu-deps/"*.log; do
@@ -16,6 +19,10 @@ cd "$WORK/kernel"
 bash xnu/apply.sh
 python3 "$GITHUB_WORKSPACE/ci/hackios/apply_chiron.py" kernel \
   --source xnu-src/xnu-8796.121.2 --report "$EVIDENCE/chiron-kernel-overlay.json"
+if [ -n "${HACKIOS_CHIRON_VARIANT:-}" ]; then
+  python3 "$GITHUB_WORKSPACE/ci/hackios/driver_variants.py" kernel \
+    --source xnu-src/xnu-8796.121.2 --evidence "$EVIDENCE"
+fi
 bash xnu-deps/setup.sh
 bash xnuloader/build.sh
 K=xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837
@@ -40,3 +47,6 @@ cp "$K" "$EVIDENCE/kernel.development.hackios"
 cp "$K.unstripped" "$EVIDENCE/kernel.development.hackios.unstripped"
 cp xnuloader/loader.efi "$EVIDENCE/loader.efi"
 printf '%s\n' "$RC" > "$EVIDENCE/kernel-make-exit.txt"
+if [ -n "${HACKIOS_CHIRON_VARIANT:-}" ]; then
+  python3 "$GITHUB_WORKSPACE/ci/hackios/driver_variants.py" record --evidence "$EVIDENCE"
+fi

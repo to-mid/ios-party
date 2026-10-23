@@ -1,0 +1,61 @@
+name: MIX2 parallel driver source builds
+
+on:
+  workflow_dispatch:
+    inputs:
+      variants:
+        description: Independent driver source builds
+        type: choice
+        required: true
+        default: all
+        options: [all, smp, touch]
+
+permissions:
+  contents: read
+
+jobs:
+  source-build:
+    name: Source build ${{ matrix.variant }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: ${{ fromJSON(inputs.variants == 'smp' && '["smp2","smp8"]' || inputs.variants == 'touch' && '["touch"]' || '["touch","smp2","smp8"]') }}
+    env:
+      PORT_WORK: ${{ github.workspace }}/.cache/chiron-drivers
+      PORT_EVIDENCE: ${{ github.workspace }}/dist/chiron-drivers
+      HACKIOS_CHIRON_VARIANT: ${{ matrix.variant }}
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install source build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang lld llvm flex bison m4 perl autoconf automake \
+            curl xz-utils uuid-dev libxml2-dev libssl-dev zlib1g-dev pkg-config \
+            libtinfo6 7zip qemu-system-arm qemu-efi-aarch64 ipxe-qemu python3-pil
+          if ! command -v 7z >/dev/null; then sudo ln -s "$(command -v 7zz)" /usr/local/bin/7z; fi
+      - name: Test driver logic and experiment isolation
+        run: python3 -B -m unittest discover -s tests -p 'test_chiron_*.py' -v
+      - name: Prepare the fixed native chiron source
+        run: python3 ci/hackios/chiron.py prepare --work "$PORT_WORK" --evidence "$PORT_EVIDENCE"
+      - name: Apply the independent loader experiment
+        run: |
+          python3 ci/hackios/driver_variants.py loader \
+            --source "$PORT_WORK/kernel" --evidence "$PORT_EVIDENCE"
+      - name: Build a fresh experimental source kernel and loader
+        run: bash ci/hackios/build-chiron-kernel.sh "$PORT_WORK" "$PORT_EVIDENCE"
+      - name: Preserve build failure logs
+        if: failure()
+        run: python3 ci/hackios/cloud.py diagnostics --work "$PORT_WORK" --evidence "$PORT_EVIDENCE"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: chiron-driver-source-${{ matrix.variant }}-${{ github.run_id }}
+          path: dist/chiron-drivers/
+          retention-days: 7
+          compression-level: 1
