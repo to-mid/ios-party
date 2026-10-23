@@ -54,7 +54,12 @@ jobs:
         run: bash ci/hackios/build-chiron-kernel.sh "$PORT_WORK" "$PORT_EVIDENCE"
       - name: Preserve build failure logs
         if: failure()
-        run: python3 ci/hackios/cloud.py diagnostics --work "$PORT_WORK" --evidence "$PORT_EVIDENCE"
+        run: |
+          mkdir -p "$PORT_EVIDENCE"
+          for log in "$PORT_WORK/kernel/xnu-deps/"*.log; do
+            test -f "$log" || continue
+            cp "$log" "$PORT_EVIDENCE/dependency-$(basename "$log")"
+          done
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

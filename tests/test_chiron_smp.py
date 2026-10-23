@@ -88,7 +88,7 @@ int main(void) {
     assert(chiron_smp_parse("debug=8 xcpus=8 cpus_hint=8", &count) && count == 1);
     assert(chiron_smp_parse("   ", &count) && count == 1);
     for (int n = 1; n <= 8; n *= 2) {
-        char args[16]; snprintf(args, sizeof(args), "cpus=%d", n);
+        char args[32]; snprintf(args, sizeof(args), "cpus=%d", n);
         reset();
         assert(prepare(args, 0, 0, image, &count) == (n <= CHIRON_SMP_LIMIT));
         if (n <= CHIRON_SMP_LIMIT) {
