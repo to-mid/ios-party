@@ -172,11 +172,33 @@ SMP 实现文件为 `apply_chiron_smp.py`、`chiron_smp_loader.inc`、
 reuse 环境变量复用内核；`build-chiron-kernel.sh` 在 CHIRON_PORT overlay 后应用
 对应 kernel overlay，并在编译后生成绑定最终产物哈希的 `driver-build.json`。
 
-手动工作流 `.github/workflows/hackios-chiron-drivers.yml` 提供独立的
-`touch`、`smp2`、`smp8` 三个并行 job，单项失败不取消其他项。
+工作流 `.github/workflows/hackios-chiron-drivers.yml` 提供独立的
+`touch`、`smp2`、`smp8` 三个 job，单项失败不取消其他项。手动输入可以选择
+全部、仅 SMP 或仅触摸；实验分支上的工作流文件变更会触发两个 SMP job。
 它只准备固定源码并重新编译内核和 loader，不下载或重建 Apple 系统卷，
 不生成手机 boot 容器，也不执行 QEMU 或手机操作。
-工作流源码已在本地完成 YAML 解析检查，尚未推送或运行云构建。
+工作流已完成本地 YAML 解析检查并发布到独立分支
+`codex/chiron-parallel-drivers`，API 发布后核对远端 Git tree 与本地提交一致。
+首轮运行 `39963940121` 停在宿主测试编译：GCC 对测试缓冲区的 `snprintf`
+报截断告警，XNU 编译尚未开始。缓冲区从 16 字节改为 32 字节，并修正旧版
+cloud 脚本不支持 diagnostics 子命令的问题；本地相关三项测试复跑通过。
+修正后的远端源码提交为 `e25128d309de6295741d7c1368d6379601ea4014`；
+运行 `39964860075` 的 `smp2` 与 `smp8` 两项均通过完整构建，包括重新应用
+固定 XNU 源码、SMP overlay、依赖准备、实际内核链接、loader EFI 链接与
+未定义符号检查。两项均没有设置旧内核 reuse 环境变量。对应产物为
+`chiron-driver-source-smp2-39964860075`、
+`chiron-driver-source-smp8-39964860075`。两份产物已下载到
+`dist/chiron-driver-build-39964860075/`，本地独立核对清单与二进制 SHA-256、
+ARM64 Mach-O / EFI 格式、SMP ABI 数据和空未定义符号表，结果为该目录下的
+`local-verification.json`。
+
+上游 make 实际退出码均为 2，不能声称全部 make 目标通过。完整日志
+`out/chiron-driver-cloud-39964860075.log` 确认错误来自既有 `check_all_exports`
+和 IOKit / Libkern / Private symbolset 的导出名单检查；内核已先完成
+LD、DSYMUTIL、STRIP，并打印 built kernel。实验构建沿用原项目的门槛：
+要求本轮新链接产物、空未定义符号表和实际产物哈希；本轮日志未见源码编译错误。
+此次没有修复上游 SDK 导出名单，不能据此承诺完整 DriverKit / kext 兼容性。
+此运行没有执行 QEMU 或手机测试，不能将完整编译通过记为多核运行通过。
 
 构建报告明确保留 `runtime_qualified=false`、`hardware_observed=false` 和
 `phone_boot_ready=false`。原 `chiron.py` 的 images、qemu、summarize 入口拒绝

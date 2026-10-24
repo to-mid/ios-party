@@ -55,6 +55,50 @@ class NativeProtocolTests(unittest.TestCase):
         self.run_case(3)
 
 
+class NativeTransportTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        compiler = shutil.which("cc")
+        if not compiler:
+            raise unittest.SkipTest("host C compiler unavailable")
+        cls.tmp = tempfile.TemporaryDirectory(prefix="chiron-touch-qup-")
+        cls.addClassCleanup(cls.tmp.cleanup)
+        cls.program = Path(cls.tmp.name) / "native-test"
+        subprocess.run([
+            compiler, "-std=c11", "-Wall", "-Wextra", "-Werror",
+            "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
+            "-I", str(touch.DRIVER), str(OVERLAY / "chiron_touch_native_host.c"),
+            *[str(touch.DRIVER / name) for name in (
+                "chiron_dsx.c", "chiron_qup.c", "chiron_f12.c", "chiron_native.c")],
+            "-o", str(cls.program),
+        ], check=True, capture_output=True, text=True)
+
+    def run_case(self, number):
+        result = subprocess.run([str(self.program), str(number)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_handoff_refusal_has_no_mmio_writes(self):
+        self.run_case(0)
+
+    def test_real_tag_stream_counts_packing_and_fifo_capacity(self):
+        self.run_case(1)
+
+    def test_error_timeout_short_fifo_poison_without_partial_data(self):
+        self.run_case(2)
+
+    def test_vendor_f12_query_control_layout_and_unknown_profile_refusal(self):
+        self.run_case(3)
+
+    def test_qup_f12_discovery_to_existing_hid_producer_and_reset_release(self):
+        self.run_case(4)
+
+    def test_data15_releases_stale_objects_and_refuses_torn_snapshots(self):
+        self.run_case(5)
+
+    def test_elapsed_deadlines_survive_oversleep_stalled_or_regressing_clocks(self):
+        self.run_case(6)
+
+
 class OverlayTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="chiron-touch-overlay-")
@@ -82,7 +126,9 @@ class OverlayTests(unittest.TestCase):
         before = (self.folder / prefix / "redwood_input.c").read_bytes()
         result = touch.apply(source=self.folder)
         self.assertFalse(result["hardware_touch_available"])
-        self.assertFalse(result["native_i2c_transport_implemented"])
+        self.assertTrue(result["native_i2c_transport_implemented"])
+        self.assertTrue(result["f12_layout_validator_implemented"])
+        self.assertFalse(result["native_i2c_hardware_enabled"])
         self.assertEqual(result["kind"], "source")
         self.assertEqual((self.folder / prefix / "redwood_input.c").read_bytes(), before)
         self.assertEqual(set(result["result"]), {str(prefix / name) for name in touch.COPIES})
@@ -139,7 +185,7 @@ class OverlayTests(unittest.TestCase):
         if not compiler:
             self.skipTest("host C compiler unavailable")
         includes = self.folder / "host"
-        for name in ("kern/clock.h", "kern/thread.h", "libkern/libkern.h",
+        for name in ("kern/clock.h", "kern/sched_prim.h", "kern/thread.h", "libkern/libkern.h",
                      "mach/mach_types.h", "pexpert/pexpert.h", "sys/redwood_input.h", "sys/systm.h"):
             dest = includes / name
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -154,13 +200,19 @@ class OverlayTests(unittest.TestCase):
 #define CHIRON_PORT 1
 #define KERN_SUCCESS 0
 #define NSEC_PER_MSEC 1000000
+#define THREAD_UNINT 2
+#define THREAD_WAITING -1
+#define THREAD_TIMED_OUT 1
+#define THREAD_CONTINUE_NULL NULL
 #define REDWOOD_TOUCH_DOWN 1
 #define REDWOOD_TOUCH_MOVE 2
 #define REDWOOD_TOUCH_UP 3
 typedef int kern_return_t;
 typedef int wait_result_t;
 typedef void *thread_t;
-static int enabled, starts, posts, waits;
+typedef void *event_t;
+static int enabled, starts, posts, waits, blocks, waiting_result = THREAD_WAITING;
+static event_t wait_event;
 static bool PE_parse_boot_argn(const char *name, void *out, int size) {
     assert(strcmp(name, "chiron_touch") == 0 && size == 4);
     *(uint32_t *)out = (uint32_t)enabled;
@@ -172,14 +224,28 @@ static int kernel_thread_start(void (*fn)(void *, wait_result_t), void *arg, thr
 static void thread_deallocate(thread_t t) { (void)t; }
 static thread_t current_thread(void) { return NULL; }
 kern_return_t thread_terminate(thread_t t) { (void)t; return 0; }
-static void delay_for_interval(int n, int scale) { (void)n; (void)scale; waits++; }
+static wait_result_t assert_wait_timeout(event_t event, int mode, uint32_t n, uint32_t scale) {
+    assert(event != NULL && mode == THREAD_UNINT && n == 20 && scale == NSEC_PER_MSEC);
+    wait_event = event; waits++;
+    return waiting_result;
+}
+static wait_result_t thread_block(void *continuation) {
+    assert(continuation == NULL && wait_event != NULL && waiting_result == THREAD_WAITING);
+    blocks++;
+    return THREAD_TIMED_OUT;
+}
 static void redwood_touch_post(uint32_t t, uint32_t f, uint32_t x, uint32_t y) {
     (void)t; (void)f; (void)x; (void)y; posts++;
 }
 #include "redwood_goodix.c"
 int main(void) {
     for (enabled = 0; enabled < 4; enabled++) redwood_goodix_init();
-    assert(starts == 0 && posts == 0 && waits == 0);
+    assert(starts == 0 && posts == 0 && waits == 0 && blocks == 0);
+    chiron_touch_sleep();
+    assert(waits == 1 && blocks == 1 && wait_event == (event_t)&chiron_touch);
+    waiting_result = THREAD_TIMED_OUT;
+    chiron_touch_sleep();
+    assert(waits == 2 && blocks == 1);
     return 0;
 }
 """)

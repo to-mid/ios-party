@@ -116,7 +116,12 @@ dsx_validate_layout(struct chiron_dsx *device, struct chiron_dsx_layout *layout)
         !layout->max_x || !layout->max_y || layout->flip > 3 ||
         layout->data1 < layout->f12.data ||
         (layout->data1 >> 8) != (layout->f12.data >> 8) ||
-        (size_t)layout->contacts * layout->object_bytes > 0xffu - (layout->data1 & 0xff))
+        (size_t)layout->contacts * layout->object_bytes > 0xffu - (layout->data1 & 0xff) ||
+        (layout->data15_bytes && (layout->data15_bytes != (layout->contacts + 7) / 8 ||
+        layout->data15 < layout->f12.data ||
+        (layout->data15 >> 8) != (layout->f12.data >> 8) ||
+        layout->data15_bytes > 0xffu - (layout->data15 & 0xff))) ||
+        (!layout->data15_bytes && layout->data15))
         return CHIRON_DSX_UNVERIFIED_LAYOUT;
     return CHIRON_DSX_OK;
 }
@@ -193,7 +198,8 @@ chiron_dsx_frame(struct chiron_dsx *device, const uint8_t *frame, size_t size)
 int
 chiron_dsx_poll(struct chiron_dsx *device)
 {
-    uint8_t frame[CHIRON_DSX_CONTACTS * CHIRON_DSX_OBJECT_BYTES];
+    uint8_t frame[CHIRON_DSX_CONTACTS * CHIRON_DSX_OBJECT_BYTES] = {0};
+    uint8_t before[2] = {0}, after[2] = {0};
     struct chiron_dsx_layout now = {0};
     int status;
     if (!device->ready)
@@ -201,11 +207,32 @@ chiron_dsx_poll(struct chiron_dsx *device)
     status = dsx_validate_layout(device, &now);
     if (!status && (now.data1 != device->layout.data1 ||
         now.max_x != device->layout.max_x || now.max_y != device->layout.max_y ||
-        now.contacts != device->layout.contacts || now.flip != device->layout.flip))
+        now.contacts != device->layout.contacts || now.flip != device->layout.flip ||
+        now.data15 != device->layout.data15 || now.data15_bytes != device->layout.data15_bytes))
         status = CHIRON_DSX_UNVERIFIED_LAYOUT;
-    if (!status)
+    if (!status && now.data15_bytes)
+        status = dsx_read(device, now.data15, before, now.data15_bytes);
+    if (!status && (!now.data15_bytes || before[0] || before[1]))
         status = dsx_read(device, device->layout.data1, frame,
             (size_t)device->layout.contacts * CHIRON_DSX_OBJECT_BYTES);
+    if (!status && now.data15_bytes) {
+        status = dsx_read(device, now.data15, after, now.data15_bytes);
+        unsigned mask = (unsigned)before[0] | (unsigned)before[1] << 8;
+        if (!status && (before[0] != after[0] || before[1] != after[1] ||
+            mask >> now.contacts))
+            status = CHIRON_DSX_BAD_FRAME;
+        if (!status)
+            for (unsigned i = 0; i < now.contacts; i++)
+                if (!(mask & (1u << i)))
+                    for (unsigned j = 0; j < CHIRON_DSX_OBJECT_BYTES; j++)
+                        frame[i * CHIRON_DSX_OBJECT_BYTES + j] = 0;
+    }
+    if (!status) {
+        uint8_t f01_status;
+        status = dsx_read(device, device->functions.f01.data, &f01_status, 1);
+        if (!status && f01_status != 0)
+            status = CHIRON_DSX_UNVERIFIED_LAYOUT;
+    }
     if (!status)
         status = chiron_dsx_frame(device, frame,
             (size_t)device->layout.contacts * CHIRON_DSX_OBJECT_BYTES);

@@ -46,6 +46,8 @@ struct chiron_dsx_layout {
     struct chiron_dsx_function f12;
     uint16_t data1, max_x, max_y;
     uint8_t object_bytes, contacts, flip; /* flip bit 0: X; bit 1: Y */
+    uint16_t data15;
+    uint8_t data15_bytes;
 };
 
 struct chiron_dsx_bus {

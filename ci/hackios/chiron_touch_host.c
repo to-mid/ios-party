@@ -249,7 +249,7 @@ polling(void)
     assert(chiron_dsx_start(&d) == 0 && chiron_dsx_poll(&d) == 0);
     before = reads;
     page = 4; /* External page changes do not redirect a subsequent read. */
-    assert(chiron_dsx_poll(&d) == 0 && page == 1 && reads == before + 1);
+    assert(chiron_dsx_poll(&d) == 0 && page == 0 && reads == before + 2);
     object(registers[1] + 0x51, 2, 1, 100, 200);
     assert(chiron_dsx_poll(&d) == 0 && count == 1);
     /* Reprobe releases contacts even if discovering the replacement fails. */

@@ -15,6 +15,12 @@ COPIES = {
     "redwood_goodix.c": "chiron_xnu.c",
     "chiron_dsx.h": "chiron_dsx.h",
     "chiron_touch_core.inc": "chiron_dsx.c",
+    "chiron_qup.h": "chiron_qup.h",
+    "chiron_touch_qup.inc": "chiron_qup.c",
+    "chiron_f12.h": "chiron_f12.h",
+    "chiron_touch_f12.inc": "chiron_f12.c",
+    "chiron_native.h": "chiron_native.h",
+    "chiron_touch_native.inc": "chiron_native.c",
 }
 
 
@@ -47,13 +53,16 @@ def _overlay(root, prefix, manifest):
     return {
         "schema": "chiron-touch-overlay-v1",
         "kind": "source" if str(prefix).startswith("xnu/") else "kernel",
-        "status": "blocked-native-i2c-and-layout-evidence",
+        "status": "blocked-board-handoff-and-runtime-qualification",
         "boot_arg": "chiron_touch=1",
         "kernel_rebuild_required": True,
         "hardware_observed": False,
         "hardware_touch_available": False,
-        "native_i2c_transport_implemented": False,
+        "native_i2c_transport_implemented": True,
+        "f12_layout_validator_implemented": True,
+        "native_i2c_hardware_enabled": False,
         "source_commit": manifest["hackios_commit"],
+        "protocol_source_commit": manifest["native_upstream"]["commit"],
         "replaced_source_sha256": before,
         "result": {relative: digest(data) for relative, data in edits.items()},
         "manifest_sha256": digest(MANIFEST.read_bytes()),
