@@ -24,6 +24,8 @@ COPIES = {
     "chiron_board.h": "chiron_board.h",
     "chiron_touch_board.inc": "chiron_board.c",
     "chiron_touch_abi.h": "chiron_touch_abi.h",
+    "chiron_clock.h": "chiron_clock.h",
+    "chiron_touch_clock.inc": "chiron_clock.c",
 }
 
 
@@ -56,11 +58,14 @@ def _overlay(root, prefix, manifest):
     return {
         "schema": "chiron-touch-overlay-v1",
         "kind": "source" if str(prefix).startswith("xnu/") else "kernel",
-        "status": "experimental-retained-handoff-runtime-unqualified",
+        "status": "experimental-clock-bringup-runtime-unqualified",
         "boot_arg": "chiron_touch=1",
         "read_only_probe_boot_arg": "chiron_touch_probe=1",
         "legacy_async_read_only_boot_arg": "chiron_touch=2",
         "photo_probe_boot_arg": "chiron_touch_probe=1",
+        "clock_probe_boot_arg": "chiron_touch_clock_probe=1",
+        "clock_prepare_implemented": True,
+        "clock_probe_writes": "BLSP1-AHB-vote-and-QUP5-XO-clock-only",
         "kernel_rebuild_required": True,
         "hardware_observed": False,
         "hardware_touch_available": False,
@@ -70,7 +75,7 @@ def _overlay(root, prefix, manifest):
         "board_probe_implemented": True,
         "loader_overlay_required_for_native": True,
         "native_i2c_can_enable_conditionally": True,
-        "runtime_enable_policy": "retained-registers-and-direct-bootcpu-handoff",
+        "runtime_enable_policy": "owned-clock-prepare-then-retained-pins-and-QUP",
         "source_commit": manifest["hackios_commit"],
         "protocol_source_commit": manifest["native_upstream"]["commit"],
         "replaced_source_sha256": before,
@@ -157,6 +162,7 @@ def loader_overlay(source):
         (source / relative).write_bytes(data)
     return {"schema": "chiron-touch-overlay-v1", "kind": "loader",
             "board_probe_implemented": True, "photo_probe_boot_arg": "chiron_touch_probe=1",
+            "clock_probe_boot_arg": "chiron_touch_clock_probe=1",
             "firmware_mode": "resident-not-exited",
             "ownership_assumption": "same-boot-cpu-direct-entry-and-seven-other-affinities-OFF",
             "hardware_observed": False, "runtime_qualified": False,

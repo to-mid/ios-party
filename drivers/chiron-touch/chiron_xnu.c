@@ -23,6 +23,7 @@
 #include "chiron_touch_f12.inc"
 #include "chiron_touch_native.inc"
 #include "chiron_touch_board.inc"
+#include "chiron_touch_clock.inc"
 
 _Static_assert(CHIRON_DSX_DOWN == REDWOOD_TOUCH_DOWN, "touch DOWN ABI");
 _Static_assert(CHIRON_DSX_MOVE == REDWOOD_TOUCH_MOVE, "touch MOVE ABI");
@@ -35,6 +36,8 @@ static struct chiron_dsx chiron_touch;
 static struct chiron_native chiron_native;
 static struct chiron_board_io chiron_board_io;
 static struct chiron_board_report chiron_board_report;
+static struct chiron_clock_report chiron_clock_report;
+static int chiron_clock_writes_allowed;
 static uint32_t chiron_touch_mode;
 static struct {
     uint64_t physical;
@@ -164,6 +167,44 @@ chiron_now_us(void *context)
 }
 
 static void
+chiron_clock_delay_us(void *context, uint32_t interval)
+{
+    uint64_t start = mach_absolute_time();
+    (void)context;
+    /* The GCC source uses udelay(1); scheduler sleeps can exceed 500 us. */
+    for (unsigned i = 0; i < 4096; i++) {
+        uint64_t now = mach_absolute_time(), ns;
+        if (now < start)
+            return;
+        absolutetime_to_nanoseconds(now - start, &ns);
+        if (ns >= (uint64_t)interval * NSEC_PER_USEC)
+            return;
+    }
+}
+
+static int
+chiron_clock_write32(void *context, uint64_t physical, uint32_t value)
+{
+    struct chiron_board_report identity;
+    (void)context;
+    if (!chiron_clock_writes_allowed ||
+        chiron_board_identity(&chiron_board_io, &identity) || !identity.owner_assumed)
+        return -1;
+    if (physical != chiron_board_register_address(CB_AHB_VOTE) &&
+        physical != chiron_board_register_address(CB_QUP_CLOCK) &&
+        physical != chiron_board_register_address(CB_ROOT_COMMAND) &&
+        physical != chiron_board_register_address(CB_ROOT_CONFIG))
+        return -1;
+    vm_offset_t mapped = chiron_map_register(physical);
+    if (!mapped)
+        return -1;
+    chiron_io_barrier(NULL);
+    *(volatile uint32_t *)mapped = value;
+    chiron_io_barrier(NULL);
+    return 0;
+}
+
+static void
 chiron_probe_report(void)
 {
     printf("chiron touch: retained probe status=%d failed=%d observed=%x handoff=%u/%u/%x/%u\n",
@@ -253,6 +294,86 @@ chiron_touch_probe_stop(void)
         (unsigned)chiron_board_report.values[CB_QUP_STATUS]);
 }
 
+static int
+chiron_prepare_clocks(void)
+{
+    int status;
+    chiron_clock_report = (struct chiron_clock_report){
+        .failed_register = -1, .cleanup_register = -1
+    };
+    chiron_board_io = (struct chiron_board_io){NULL, chiron_property, chiron_physical_read};
+    status = chiron_board_identity(&chiron_board_io, &chiron_board_report);
+    if (!status) {
+        struct chiron_clock_io io = {
+            chiron_board_io, chiron_clock_write32, chiron_io_barrier,
+            chiron_now_us, chiron_clock_delay_us
+        };
+        chiron_clock_writes_allowed = 1;
+        status = chiron_clock_prepare(&io, &chiron_clock_report);
+        chiron_clock_writes_allowed = 0;
+    } else {
+        chiron_clock_report.result = status;
+        chiron_clock_report.before = chiron_board_report;
+        chiron_clock_report.after = chiron_board_report;
+    }
+    printf("chiron touch: clock prepare result=%d step=%d reg=%d changed=%x remaining=%x "
+        "rollback=%d cleanup=%d/%d/%d\n",
+        status, chiron_clock_report.step, chiron_clock_report.failed_register,
+        (unsigned)chiron_clock_report.changed, (unsigned)chiron_clock_report.remaining,
+        chiron_clock_report.rollback, chiron_clock_report.cleanup_result,
+        chiron_clock_report.cleanup_step, chiron_clock_report.cleanup_register);
+    if (status) {
+        chiron_board_report = chiron_clock_report.after;
+        chiron_board_report.issue = status;
+        chiron_board_report.failed_register = -1;
+    }
+    return status;
+}
+
+static void
+chiron_touch_clock_probe_stop(void)
+{
+    int status = chiron_prepare_clocks();
+    if (!status)
+        (void)chiron_board_probe(&chiron_board_io, &chiron_board_report);
+    chiron_probe_report();
+    printf("CHIRON TOUCH CLOCK PROBE: GCC clocks only; no GPIO/regulator/QUP writes or worker\n");
+    panic("CHIRON TOUCH CLOCK PROBE result=%d step=%d reg=%d changed=%x left=%x\n"
+        "rollback=%d cleanup=%d/%d/%d before_obs=%x after_obs=%x\n"
+        "board=%d bad=%d obs=%x owner=%u/%u/%x/%u\n"
+        "BEFORE vote=%x ahb=%x qup=%x cmd=%x cfg=%x\n"
+        "AFTER vote=%x ahb=%x qup=%x cmd=%x cfg=%x\n"
+        "GPIO87=%x GPIO88=%x resetcfg=%x resetio=%x\n"
+        "GIC en4=%x QUP state=%x status=%x\n"
+        "GCC CLOCK WRITES REQUESTED. NO TOUCH TRANSACTIONS.",
+        status, chiron_clock_report.step, chiron_clock_report.failed_register,
+        (unsigned)chiron_clock_report.changed, (unsigned)chiron_clock_report.remaining,
+        chiron_clock_report.rollback, chiron_clock_report.cleanup_result,
+        chiron_clock_report.cleanup_step, chiron_clock_report.cleanup_register,
+        (unsigned)chiron_clock_report.before.observed,
+        (unsigned)chiron_clock_report.after.observed, chiron_board_report.issue,
+        chiron_board_report.failed_register, (unsigned)chiron_board_report.observed,
+        (unsigned)chiron_board_report.handoff[0], (unsigned)chiron_board_report.handoff[1],
+        (unsigned)chiron_board_report.handoff[2], (unsigned)chiron_board_report.handoff[3],
+        (unsigned)chiron_clock_report.before.values[CB_AHB_VOTE],
+        (unsigned)chiron_clock_report.before.values[CB_AHB_CLOCK],
+        (unsigned)chiron_clock_report.before.values[CB_QUP_CLOCK],
+        (unsigned)chiron_clock_report.before.values[CB_ROOT_COMMAND],
+        (unsigned)chiron_clock_report.before.values[CB_ROOT_CONFIG],
+        (unsigned)chiron_clock_report.after.values[CB_AHB_VOTE],
+        (unsigned)chiron_clock_report.after.values[CB_AHB_CLOCK],
+        (unsigned)chiron_clock_report.after.values[CB_QUP_CLOCK],
+        (unsigned)chiron_clock_report.after.values[CB_ROOT_COMMAND],
+        (unsigned)chiron_clock_report.after.values[CB_ROOT_CONFIG],
+        (unsigned)chiron_board_report.values[CB_SDA_MUX],
+        (unsigned)chiron_board_report.values[CB_SCL_MUX],
+        (unsigned)chiron_board_report.values[CB_RESET_CONFIG],
+        (unsigned)chiron_board_report.values[CB_RESET_LEVEL],
+        (unsigned)chiron_board_report.values[CB_QUP_IRQ_ENABLE],
+        (unsigned)chiron_board_report.values[CB_QUP_STATE],
+        (unsigned)chiron_board_report.values[CB_QUP_STATUS]);
+}
+
 static void
 chiron_touch_thread(void *parameter, wait_result_t result)
 {
@@ -260,9 +381,18 @@ chiron_touch_thread(void *parameter, wait_result_t result)
     struct chiron_dsx_bus bus = {0};
     (void)parameter;
     (void)result;
+    if (chiron_touch_mode == 1) {
+        status = chiron_prepare_clocks();
+        if (status) {
+            chiron_probe_report();
+            printf("chiron touch: clock preparation refused (%d); stopped before QUP\n", status);
+            thread_terminate(current_thread());
+            return;
+        }
+    }
     status = chiron_native_transport(&bus);
     if (status) {
-        printf("chiron touch: transport refused (%d); no clock/pin/reset/regulator writes\n", status);
+        printf("chiron touch: transport refused (%d); no pin/reset/regulator writes\n", status);
         thread_terminate(current_thread());
         return;
     }
@@ -290,12 +420,16 @@ chiron_touch_thread(void *parameter, wait_result_t result)
 void
 redwood_goodix_init(void)
 {
-    uint32_t enabled = 0, probe = 0;
+    uint32_t enabled = 0, probe = 0, clocks = 0;
     thread_t thread;
     int status;
     /* Probe takes priority even if the payload also requests normal touch. */
     if (PE_parse_boot_argn("chiron_touch_probe", &probe, sizeof(probe)) && probe == 1) {
         chiron_touch_probe_stop();
+        return;
+    }
+    if (PE_parse_boot_argn("chiron_touch_clock_probe", &clocks, sizeof(clocks)) && clocks == 1) {
+        chiron_touch_clock_probe_stop();
         return;
     }
     if (!PE_parse_boot_argn("chiron_touch", &enabled, sizeof(enabled)) ||

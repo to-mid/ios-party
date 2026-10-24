@@ -36,6 +36,9 @@ int main(void)
     assert(chiron_touch_loader_owner("chiron_touch=2", 0, 0) == 1 && queries == 8);
     assert(chiron_touch_loader_owner("chiron_touch_probe=1", 0, 0) == 1);
     assert(chiron_touch_loader_owner("cpus=1 epoch=1792812345 -v chiron_touch_probe=1", 0, 0) == 1);
+    assert(chiron_touch_loader_owner("cpus=1 epoch=1792812345 -v chiron_touch_clock_probe=1", 0, 0) == 1);
+    assert(!chiron_touch_loader_owner("chiron_touch_clock_probe=10", 0, 0));
+    assert(!chiron_touch_loader_owner("chiron_touch_clock_probe=1 chiron_touch_clock_probe=1", 0, 0));
     assert(chiron_touch_loader_owner("chiron_touch=1 chiron_touch_probe=1", 0, 0) == 1);
     assert(!chiron_touch_loader_owner("chiron_touch_probe=10", 0, 0));
     for (unsigned i = 0; i < 7; i++) {

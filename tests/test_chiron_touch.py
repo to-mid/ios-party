@@ -228,7 +228,7 @@ typedef uintptr_t vm_offset_t;
 typedef uintptr_t vm_size_t;
 typedef void *DTEntry;
 #define kSuccess 0
-static int maps, valid_platform, probe_mode, panics;
+static int maps, valid_platform, probe_mode, clock_mode, panics;
 static jmp_buf panic_env;
 static const char *panic_format;
 static uint32_t gcc_words[0xb0000/4], gpio_words[0x3000/4];
@@ -280,6 +280,9 @@ static bool PE_parse_boot_argn(const char *name, void *out, int size) {
     if (!strcmp(name, "chiron_touch_probe")) {
         *(uint32_t *)out = (uint32_t)probe_mode; return probe_mode != 0;
     }
+    if (!strcmp(name, "chiron_touch_clock_probe")) {
+        *(uint32_t *)out = (uint32_t)clock_mode; return clock_mode != 0;
+    }
     assert(!strcmp(name, "chiron_touch"));
     *(uint32_t *)out = (uint32_t)enabled; return enabled != 0;
 }
@@ -311,7 +314,9 @@ int main(void) {
     waiting_result = THREAD_TIMED_OUT;
     chiron_touch_sleep();
     assert(waits == 2 && blocks == 1);
-    enabled = 1; probe_mode = 1;
+    chiron_clock_delay_us(NULL, 1); /* Stalled host counter must still return. */
+    assert(waits == 2 && blocks == 1);
+    enabled = 1; probe_mode = 1; clock_mode = 1;
     if (!setjmp(panic_env)) {
         redwood_goodix_init();
         assert(!"probe must stop before GUI");
@@ -343,6 +348,32 @@ int main(void) {
     assert(!memcmp(gpio_before, gpio_words, sizeof(gpio_words)));
     assert(!memcmp(gic_before, gic_words, sizeof(gic_words)));
     assert(!memcmp(qup_before, qup_words, sizeof(qup_words)));
+    probe_mode = 0; valid_platform = 0;
+    if (!setjmp(panic_env)) {
+        redwood_goodix_init();
+        assert(!"clock probe must stop without a valid platform");
+    }
+    assert(panics == 3 && maps == 4 && starts == 0);
+    assert(strstr(panic_format, "CHIRON TOUCH CLOCK PROBE"));
+    assert(chiron_clock_report.changed == 0 && !chiron_clock_writes_allowed);
+    valid_platform = 1;
+    if (!setjmp(panic_env)) {
+        redwood_goodix_init();
+        assert(!"already-on clock probe must stop before starting touch");
+    }
+    assert(panics == 4 && maps == 4 && starts == 0 && posts == 0);
+    assert(chiron_clock_report.result == 0 && chiron_clock_report.changed == 0);
+    assert(!chiron_clock_writes_allowed);
+    assert(!memcmp(gcc_before, gcc_words, sizeof(gcc_words)));
+    assert(!memcmp(gpio_before, gpio_words, sizeof(gpio_words)));
+    assert(!memcmp(gic_before, gic_words, sizeof(gic_words)));
+    assert(!memcmp(qup_before, qup_words, sizeof(qup_words)));
+    assert(chiron_clock_write32(NULL, CHIRON_GCC_BASE + 0x52004, 0) == -1);
+    chiron_clock_writes_allowed = 1;
+    assert(chiron_clock_write32(NULL, CHIRON_GPIO_BASE, 0) == -1);
+    assert(chiron_clock_write32(NULL, CHIRON_GCC_BASE + 0x52004, 1u << 17) == 0);
+    chiron_clock_writes_allowed = 0;
+    assert(!memcmp(gpio_before, gpio_words, sizeof(gpio_words)));
     return 0;
 }
 """)

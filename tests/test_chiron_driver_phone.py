@@ -68,6 +68,21 @@ def touch_fixture(command="cpus=1 epoch=1792760000 -v chiron_touch_probe=1"):
     return proof, inputs, payload
 
 
+def clock_fixture():
+    command = "cpus=1 epoch=1792760000 -v chiron_touch_clock_probe=1"
+    proof, inputs, payload = touch_fixture(command)
+    entries = phone.payload_entries(payload)
+    entries["kernel"] += b"CHIRON TOUCH CLOCK PROBE"
+    payload = pack(list(entries.items()))
+    kernel = phone.content_digest(entries["kernel"])
+    proof["kernel"] = kernel
+    proof["source_build"]["artifacts"]["kernel.development.hackios"] = kernel
+    proof["source_build"]["overlays"]["kernel"]["changes"]["touch"]["clock_prepare_implemented"] = True
+    proof.update(clock_prepare=True, clock_writes=True, read_only=False)
+    inputs["payload"] = phone.content_digest(payload)
+    return proof, inputs, payload
+
+
 class ExperimentAdmissionTests(unittest.TestCase):
     def test_both_source_experiments_bind_actual_kernel_root_and_cpu_arguments(self):
         for count in (2, 8):
@@ -177,6 +192,25 @@ class ExperimentAdmissionTests(unittest.TestCase):
             proof, inputs, payload = touch_fixture(command)
             with self.subTest(command=command), self.assertRaisesRegex(ValueError, "arguments"):
                 phone.admit_qualification(proof, inputs, payload, True)
+
+    def test_clock_probe_has_a_distinct_explicit_write_mode(self):
+        proof, inputs, payload = clock_fixture()
+        self.assertEqual(phone.admit_qualification(proof, inputs, payload, True)["variant"], "touch")
+        for key, value in (("read_only", True), ("clock_writes", False), ("clock_prepare", "true")):
+            altered = copy.deepcopy(proof)
+            altered[key] = value
+            changed_inputs = dict(inputs, driver_experiment=altered)
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                phone.admit_qualification(altered, changed_inputs, payload, True)
+        proof["source_build"]["overlays"]["kernel"]["changes"]["touch"]["clock_prepare_implemented"] = False
+        with self.assertRaisesRegex(ValueError, "write-mode"):
+            phone.admit_qualification(proof, inputs, payload, True)
+
+    def test_read_only_proof_cannot_smuggle_the_clock_probe_argument(self):
+        proof, inputs, payload = touch_fixture(
+            "cpus=1 epoch=1792760000 -v chiron_touch_clock_probe=1")
+        with self.assertRaisesRegex(ValueError, "arguments"):
+            phone.admit_qualification(proof, inputs, payload, True)
 
 
 if __name__ == "__main__":
