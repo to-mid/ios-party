@@ -79,6 +79,25 @@ chiron_reset_barrier(void)
 }
 
 static int
+chiron_l6_call_marker(int returned)
+{
+    if (!SCREEN.base || SCREEN.width != 1080 || SCREEN.height != 2160 ||
+        SCREEN.stride != 4320)
+        return 0;
+    /* Publish without console, USB or PMIC calls, including cached framebuffers. */
+    for (uint32_t y = SCREEN.height - 64; y < SCREEN.height; y++) {
+        uint64_t start = SCREEN.base + (uint64_t)y * SCREEN.stride +
+            (SCREEN.width - 64) * 4;
+        volatile uint32_t *pixels = (volatile uint32_t *)(uintptr_t)start;
+        for (unsigned x = 0; x < 64; x++)
+            pixels[x] = returned ? 0x0000ff00 : 0x00ff0000;
+        chiron_reset_barrier();
+        clean_dcache(start, start + 64 * 4);
+    }
+    return 1;
+}
+
+static int
 chiron_reset_option(const char *args, const char *name, size_t length)
 {
     int seen = 0;
@@ -162,8 +181,13 @@ chiron_reset_prepare_l6(struct chiron_reset_vreg *vreg, const char *args,
         chiron_reset_read(0x03d59004) != io ||
         chiron_touch_loader_owner(args, boot, kernel) != CHIRON_TOUCH_DIRECT_BOOT_CPU)
         return 0;
+    print("CHIRON L6 MARKER: bottom-right RED=calling GREEN=returned\n");
     print("CHIRON L6 TRACE: calling SetLevelUv L6=1800000\n");
+    if (!chiron_l6_call_marker(0))
+        return 0;
     status = vreg->set_level_uv(0, 5, 1800000);
+    if (!chiron_l6_call_marker(1))
+        return 0;
     print("CHIRON L6 PROBE: changed=1 set_status=%x; no retry or voltage rollback\n",
         (uint64_t)status);
     if (EFI_ERROR(status) || !chiron_reset_wait(5000))

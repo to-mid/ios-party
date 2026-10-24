@@ -51,6 +51,17 @@ static uint32_t l6_uv = 1808000;
 #define CHIRON_TOUCH_L6_PREPARE l6_build
 static uint32_t gpio50_cfg = 0x203, gpio50_io = 3, cfg = 0x203, io;
 static uint64_t ticks, model_frequency = 19200000, delays[4];
+static uint32_t framebuffer[1080 * 2160];
+static struct {
+    uint64_t base;
+    uint32_t width, height, stride;
+} SCREEN;
+static unsigned cleaned_rows;
+static void clean_dcache(uint64_t start, uint64_t end) {
+    assert(start >= SCREEN.base && end <= SCREEN.base + sizeof(framebuffer));
+    assert(end - start == 64 * 4);
+    cleaned_rows++;
+}
 #define CNTFRQ_EL0 0
 #define CNTVCT_EL0 1
 #define READ_SYSREG(reg) ((reg) == CNTFRQ_EL0 ? model_frequency : ticks)
@@ -106,6 +117,8 @@ static efi_status set_level_uv(uint32_t device, uint32_t id, uint32_t uv) {
     assert(device == 0 && id == 5 && uv == 1800000);
     assert(l6_uv == 1848000 && io == 0 && cfg == 0x203 && owner == 1);
     assert(gpio50_io == 3 && !stalls && !voltage_writes);
+    assert(cleaned_rows == 64);
+    assert(framebuffer[2160 * 1080 - 1] == 0x00ff0000);
     voltage_writes++;
     if (!set_ignored) l6_uv = uv;
     return set_error ? UINT64_C(0x8000000000000007) : 0;
@@ -114,6 +127,8 @@ int main(int argc, char **argv) {
     assert(argc == 2);
     int test = atoi(argv[1]), expected = 0;
     services.stall = stall; services.locate_protocol = locate;
+    SCREEN.base = (uintptr_t)framebuffer;
+    SCREEN.width = 1080; SCREEN.height = 2160; SCREEN.stride = 4320;
     vreg.revision = 0x10005; vreg.get_level = get_level; vreg.get_status = get_status;
     vreg.set_level_uv = set_level_uv;
     if (test >= 42) {
@@ -179,6 +194,13 @@ int main(int argc, char **argv) {
     assert(chiron_reset_prepare(args, 0, 0) == expected);
     assert(writes == (test == 0 || test == 16 || test == 22 || test == 23));
     assert(voltage_writes == (test == 22 || (test >= 29 && test <= 32) || test == 35));
+    assert(cleaned_rows == (voltage_writes ? 128u : 0u));
+    if (voltage_writes) {
+        for (unsigned y = 0; y < 2160; y++)
+            for (unsigned x = 0; x < 1080; x++)
+                assert(framebuffer[y * 1080 + x] ==
+                    (y >= 2160 - 64 && x >= 1080 - 64 ? 0x0000ff00u : 0u));
+    }
     if (expected) {
         assert(io == 3 && cfg == 0x203 && delays[stalls - 1] == 200000);
     }

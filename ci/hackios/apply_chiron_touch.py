@@ -152,8 +152,8 @@ def loader_overlay(source, reset_prepare=False, l6_prepare=False, l6_abi=False):
             "\t\t\t\treturn 0;\n\t\t\t}\n"
             "\t\t\tjump_to_kernel(entry_va + slide, ba_pa);")
     if reset_prepare or l6_abi:
-        replace('#include "chiron_touch_loader.inc"',
-                '#include "chiron_touch_loader.inc"\n' +
+        replace('} SCREEN;',
+                '} SCREEN;\n' +
                 ('#define CHIRON_TOUCH_L6_PREPARE 1\n' if l6_prepare else '') +
                 '#include "chiron_touch_reset.inc"')
     if reset_prepare:
@@ -234,6 +234,7 @@ def loader_overlay(source, reset_prepare=False, l6_prepare=False, l6_abi=False):
                                    "read-only-L6-L14-GPIO50-preflight" if reset_prepare else None),
             "l6_prepare_implemented": l6_prepare,
             "l6_screen_trace": l6_prepare,
+            "l6_direct_return_marker": l6_prepare,
             "l6_abi_implemented": l6_abi,
             "kernel_start_disabled": l6_abi,
             "power_write_policy": "LDO6-only-1848000-to-1800000-uV-with-reset-low" if l6_prepare else None,
