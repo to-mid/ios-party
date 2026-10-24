@@ -6,6 +6,7 @@ import gzip
 import hashlib
 import json
 from pathlib import Path
+import re
 import struct
 import subprocess
 import sys
@@ -15,6 +16,8 @@ import zlib
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from driver_phone import admit_qualification
 from inspect_chiron_boot import inspect
 from chiron_ram_fat import RamFat32
 
@@ -61,16 +64,22 @@ def rebuild_transport_kernel(encoded, firmware, policy):
     }
 
 
-def package(template, phone, entry, qualification, output, firmware=None, policy=None):
+def package(template, phone, entry, qualification, output, firmware=None, policy=None,
+            source_experiment=False, title="HK6c", image_name="MIX2-HackiOS-8796-usb.img"):
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}\.img", image_name):
+        raise ValueError("invalid boot image basename")
     proof = json.loads(qualification.read_text())
-    if not proof.get("cortex_a53_no_pan_lse_desktop"):
-        raise ValueError("the real constrained A53 desktop has not passed")
+    if not source_experiment:
+        admit_qualification(proof, {}, None)
+    inputs = json.loads((phone / "inputs.json").read_text())
+    experiment = admit_qualification(
+        proof, inputs, (phone / "payload.bin").read_bytes() if source_experiment else None,
+        source_experiment)
     original = template.read_bytes()
     if sha(original) != TEMPLATE_SHA:
         raise ValueError("boot template differs from the physical-qualified source-trace image")
     if (firmware is None) != (policy is None):
         raise ValueError("firmware and memory policy must be supplied together")
-    inputs = json.loads((phone / "inputs.json").read_text())
     if inputs.get("memory_loader_source_sha256") and firmware is None:
         raise ValueError("the preclaimed-window loader requires rebuilt memory-policy firmware")
     output.mkdir(parents=True, exist_ok=False)
@@ -86,7 +95,7 @@ def package(template, phone, entry, qualification, output, firmware=None, policy
         run(["mformat", "-i", fat, "-F", "-v", "CHIRONESP", "::"])
         run(["mmd", "-i", fat, "::/EFI", "::/EFI/UniXNU", "::/EFI/HackiOS"])
         config = work / "unixnu.toml"
-        config.write_text('''version = 1
+        config.write_text(('''version = 1
 [boot]
 timeout = 3
 default = "chiron-hackios"
@@ -94,7 +103,7 @@ default = "chiron-hackios"
 autoload = false
 [[entry]]
 id = "chiron-hackios"
-title = "HK6c"
+title = MENU_TITLE
 type = "efi"
 path = "/EFI/HackiOS/ChironHackios.efi"
 [[entry]]
@@ -102,7 +111,7 @@ id = "firmware"
 title = "Return to firmware"
 type = "action"
 action = "exit"
-''')
+''').replace("MENU_TITLE", json.dumps(title), 1))
         mapping = {
             "EFI/UniXNU/unixnu.toml": config,
             "EFI/HackiOS/ChironHackios.efi": entry,
@@ -141,7 +150,7 @@ action = "exit"
             page = report["header"]["page_size"]
             result = (bytes(header) + kernel + bytes(-len(kernel) % page)
                       + transported + original[ro + PHYSICAL:])
-        image = output / "MIX2-HackiOS-8796-usb.img"
+        image = output / image_name
         image.write_bytes(result)
         inspect(image, output / "inspection")
         after = json.loads((output / "inspection/inspection.json").read_text())
@@ -161,6 +170,9 @@ action = "exit"
             "hardware_boot_qualified": False,
             "next_action": "User boots the candidate, then uploads the exact system.apfs to the resident xnuloader.",
         }
+        if source_experiment:
+            manifest.update(source_experiment=True, runtime_qualified=False, experiment=experiment,
+                            next_action="User may temporarily boot this unqualified source experiment; physical CPU behavior is unverified.")
         (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
         return image
 
@@ -174,9 +186,12 @@ def main():
     ap.add_argument("--output", type=Path, required=True)
     ap.add_argument("--firmware", type=Path)
     ap.add_argument("--memory-policy", type=Path)
+    ap.add_argument("--source-experiment", action="store_true")
+    ap.add_argument("--title", default="HK6c")
+    ap.add_argument("--image-name", default="MIX2-HackiOS-8796-usb.img")
     args = ap.parse_args()
     print(package(args.template, args.phone, args.entry, args.qualification, args.output,
-                  args.firmware, args.memory_policy))
+                  args.firmware, args.memory_policy, args.source_experiment, args.title, args.image_name))
 
 
 if __name__ == "__main__":

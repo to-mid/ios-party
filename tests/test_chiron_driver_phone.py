@@ -1,0 +1,141 @@
+"""Reject stale kernels and inherited desktop qualification in SMP phone images."""
+
+import copy
+import importlib
+import json
+from pathlib import Path
+import struct
+import sys
+import tempfile
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "ci/hackios"))
+phone = importlib.import_module("driver_phone")
+
+
+def pack(entries):
+    body = bytearray()
+    for name, value in entries:
+        body.extend(struct.pack("<16sII", name.encode(), len(value), 0))
+        body.extend(value)
+        body.extend(bytes(-len(value) % 16))
+    body.extend(bytes(24))
+    return b"XNUP" + struct.pack("<I", len(body)) + body
+
+
+def fixture(count=2, command=None):
+    kernel = struct.pack("<8I", 0xFEEDFACF, 0x100000C, 0, 2, 0, 0, 0, 0) + phone.ABI
+    root = b"small root fixture"
+    command = command or f"cpus={count} epoch=1792760000"
+    payload = pack([("kernel", kernel), ("ramdisk", root),
+                    ("cmdline", command.encode() + b"\0"), ("usb", b"1\0")])
+    digest = phone.content_digest(kernel)
+    source = {
+        "schema": "chiron-driver-build-v1", "variant": f"smp{count}", "cpu_count": count,
+        "source_build_run": "123", "project_sha": "a" * 40,
+        "kernel_reused": False, "runtime_qualified": False,
+        "hardware_observed": False, "phone_boot_ready": False,
+        "artifacts": {"kernel.development.hackios": digest},
+    }
+    proof = {
+        "schema": phone.SCHEMA, "variant": f"smp{count}", "cpu_count": count,
+        "source_build": source, "kernel": digest, "command_line": command,
+        "loader_overlay": {"cpu_limit": count},
+        "runtime_qualified": False, "hardware_observed": False, "phone_boot_ready": False,
+    }
+    inputs = {"profile": {"cpu_count": count}, "payload": phone.content_digest(payload),
+              "small_root": phone.content_digest(root), "driver_experiment": proof}
+    return proof, inputs, payload
+
+
+class ExperimentAdmissionTests(unittest.TestCase):
+    def test_both_source_experiments_bind_actual_kernel_root_and_cpu_arguments(self):
+        for count in (2, 8):
+            proof, inputs, payload = fixture(count)
+            result = phone.admit_qualification(proof, inputs, payload, True)
+            self.assertEqual(result["cpu_count"], count)
+            self.assertFalse(result["runtime_qualified"])
+
+    def test_baseline_gate_is_preserved_and_cannot_qualify_driver_inputs(self):
+        self.assertIsNone(phone.admit_qualification({"cortex_a53_no_pan_lse_desktop": True}, {}, None))
+        with self.assertRaisesRegex(ValueError, "desktop"):
+            phone.admit_qualification({}, {}, None)
+        _, inputs, payload = fixture()
+        with self.assertRaisesRegex(ValueError, "explicit"):
+            phone.admit_qualification({"cortex_a53_no_pan_lse_desktop": True}, inputs, payload)
+
+    def test_source_proof_cannot_inherit_runtime_success_or_reuse_kernel(self):
+        for key in ("runtime_qualified", "hardware_observed", "phone_boot_ready", "kernel_reused"):
+            proof, inputs, payload = fixture()
+            proof["source_build"][key] = True
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                phone.admit_qualification(proof, inputs, payload, True)
+
+    def test_changed_kernel_is_rejected_even_with_updated_whole_payload_digest(self):
+        proof, inputs, payload = fixture()
+        entries = phone.payload_entries(payload)
+        entries["kernel"] += b"modified kernel"
+        changed = pack(list(entries.items()))
+        inputs["payload"] = phone.content_digest(changed)
+        with self.assertRaisesRegex(ValueError, "kernel differs"):
+            phone.admit_qualification(proof, inputs, changed, True)
+
+    def test_conflicting_cpu_arguments_or_profile_are_rejected(self):
+        for command in ("cpus=2 cpus=1 epoch=1", "cpus=8 epoch=1", "cpus=2\t epoch=1"):
+            proof, inputs, payload = fixture(command=command)
+            with self.subTest(command=command), self.assertRaises(ValueError):
+                phone.admit_qualification(proof, inputs, payload, True)
+        proof, inputs, payload = fixture()
+        inputs["profile"]["cpu_count"] = 8
+        with self.assertRaisesRegex(ValueError, "profile"):
+            phone.admit_qualification(proof, inputs, payload, True)
+
+    def test_payload_boundaries_duplicates_and_hidden_modes_are_rejected(self):
+        _, _, payload = fixture()
+        entries = list(phone.payload_entries(payload).items())
+        cases = [
+            payload[:-1],
+            pack(entries + [entries[0]]),
+            pack(entries + [("checkpoint", b"999\0")]),
+            payload + bytes(16),
+        ]
+        for data in cases:
+            with self.subTest(length=len(data)), self.assertRaises(ValueError):
+                phone.payload_entries(data)
+        _, _, valid = fixture()
+        altered = bytearray(valid)
+        # The root fixture is 18 bytes; locate its first padding byte.
+        offset = 8 + 24 + len(entries[0][1]) + 24 + len(entries[1][1])
+        altered[offset] = 1
+        with self.assertRaisesRegex(ValueError, "padding"):
+            phone.payload_entries(altered)
+
+    def test_source_folder_checks_actual_hashes_run_and_smp_abi(self):
+        proof, _, payload = fixture()
+        kernel = phone.payload_entries(payload)["kernel"]
+        with tempfile.TemporaryDirectory(prefix="chiron-driver-proof-") as temporary:
+            folder = Path(temporary)
+            (folder / "kernel.development.hackios").write_bytes(kernel)
+            (folder / "kernel-undefined.txt").write_text("")
+            (folder / "driver-build.json").write_text(json.dumps(proof["source_build"]))
+            phone.verify_source(folder, "smp2", "123")
+            with self.assertRaisesRegex(ValueError, "run"):
+                phone.verify_source(folder, "smp2", "124")
+            (folder / "kernel.development.hackios").write_bytes(kernel + b"x")
+            with self.assertRaisesRegex(ValueError, "digest"):
+                phone.verify_source(folder, "smp2", "123")
+        with self.assertRaisesRegex(ValueError, "ABI"):
+            phone.check_kernel(kernel[:-16])
+
+    def test_mismatched_proof_is_rejected_before_packaging(self):
+        proof, inputs, payload = fixture()
+        changed = copy.deepcopy(proof)
+        changed["command_line"] += " debug=1"
+        with self.assertRaisesRegex(ValueError, "proof differs"):
+            phone.admit_qualification(changed, inputs, payload, True)
+
+
+if __name__ == "__main__":
+    unittest.main()
