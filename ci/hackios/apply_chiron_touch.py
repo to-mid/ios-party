@@ -161,6 +161,22 @@ def loader_overlay(source, reset_prepare=False, l6_prepare=False):
                 '\t\tprint("CHIRON RESET PROBE: preflight failed; kernel not started\\n");\n'
                 "\t\treturn 0;\n\t}\n"
                 "\tuint64_t ranges[3] = { 0, plat->io_base, plat->io_size };")
+    if l6_prepare:
+        replace('\t\t\tset_result("running", cp, 0);\n'
+                '\t\t\tfb_reply("OKAY", "");\n'
+                '\t\t\tlog_len = 0;',
+                '\t\t\tscreen_quiet = 0;\n'
+                '\t\t\tlog_len = 0;\n'
+                '\t\t\tprint("CHIRON L6 TRACE: RUN received; replying OKAY\\n");\n'
+                '\t\t\tset_result("running", cp, 0);\n'
+                '\t\t\tfb_reply("OKAY", "");\n'
+                '\t\t\tprint("CHIRON L6 TRACE: USB ACK completed\\n");')
+        replace('\t\tchiron_touch_handoff[1] = chiron_touch_loader_owner(ba->commandLine,',
+                '\t\tprint("CHIRON L6 TRACE: checking CPU ownership\\n");\n'
+                '\t\tchiron_touch_handoff[1] = chiron_touch_loader_owner(ba->commandLine,')
+        replace('\tif (chiron_reset_requested(ba->commandLine) &&',
+                '\tprint("CHIRON L6 TRACE: entering reset preflight\\n");\n'
+                '\tif (chiron_reset_requested(ba->commandLine) &&')
     manifest = json.loads(MANIFEST.read_text())
     helper = (HERE / "chiron_touch_loader.inc").read_bytes()
     abi = (DRIVER / "chiron_touch_abi.h").read_bytes()
@@ -189,6 +205,7 @@ def loader_overlay(source, reset_prepare=False, l6_prepare=False):
             "reset_power_policy": ("L6-target-then-L6-L14-GPIO50-preflight" if l6_prepare else
                                    "read-only-L6-L14-GPIO50-preflight" if reset_prepare else None),
             "l6_prepare_implemented": l6_prepare,
+            "l6_screen_trace": l6_prepare,
             "power_write_policy": "LDO6-only-1848000-to-1800000-uV-with-reset-low" if l6_prepare else None,
             "firmware_mode": "resident-not-exited",
             "ownership_assumption": "same-boot-cpu-direct-entry-and-seven-other-affinities-OFF",

@@ -421,7 +421,7 @@ FocalTech `@38/vddio-supply`。旧前检的 `1808000 µV` 来自参考源码，�
 reset 仍低时，经 VREG `SetLevelUv(0,5,1800000)` 设置 L6，等待至少 5 ms，
 严格读回 `1800000 µV` 且 enabled/OK 后才进入已有 reset 释放流程。
 只接受已观察的 `1848000` 启动值或已经匹配的 `1800000`；后者不写电压。
-其它电源、模式和使能保持原值，未知 profile、reset 已释放、所有权改变、
+其它电源、模式和使能保持原值，未知 profile、需要改压却 reset 已释放、所有权改变、
 写失败/未生效/读回回退均停止，不重试或回写旧电压。
 需要编译期开关和 `chiron_touch_l6=1` 同时存在，旧 reset 模式拒绝这个参数。
 
@@ -434,3 +434,51 @@ VREG 相符表 RVA=`0x313d0`，GetLevel=`0x21a8`→LDO `0x9ffc`→
 手机执行了具体静态分支或测到了外部电压。来源文件及原二进制哈希已入清单。
 本地 50 项相关检查通过（含 42 个寄存器情景、ASan/UBSan、ARM64 编译及旧模式
 隔离）。仅需云端重编 loader；原内核和系统输入复用，新功能 QEMU/真机待验证。
+
+云端运行 `40079155452` 已完成新 loader 编译、链接及打包，提交为
+`0c777a42b0577f9567f86cc5a1f865f5862aa20c`。交付文件：
+`dist/chiron-driver-candidates/TOUCH-L6-PROBE-40079155452/MIX2-EXPERIMENTAL-TOUCH-L6-PROBE.img`，
+SHA-256 `42712e60d6295a6bedee14677354b5b89250b1c84e351cc78539dce18b284464`。
+容器 SHA-256/legacy SHA-1、FAT 读回、ARM64 EFI、新 helper/参数/写入声明和
+打包提交绑定均通过；内核 SHA-256 仍为
+`f4807372c55a2b782282edbe84f364bfb9b641bde3f1446e79643bffefeb6950`，
+固件/DTB/入口与 HK6c 相同，容量检查通过。
+记录为 `dist/chiron-touch-l6-probe-40079155452/local-verification.json`。
+按同目录 `START.zh-CN.md` 由用户启动后，读取 L6 `uv=1800000` / `ready=1`
+及 reset `io=3`；新功能 QEMU/真机仍未验证。
+
+2026-10-24 USB 读取重试：此前身份查询出现管道错误；重试后 product=`xnuloader`、
+board=`chiron` 和日志导出均成功，`getvar result` 为 `idle`。
+保存 `out/chiron-touch-l6-probe-usb-20261024-round5.log`（189 字节，
+SHA-256 `b400e71493c65d718a457ef66ef0dcfc442726494cd517749d3e587bd85538ba`）。
+内容仅有通用 `XNULOADER v3` 启动及 `usb: started`，没有 run、L6/reset 探针或
+内核记录；不能据此确认本轮镜像身份、L6 设置或 reset 放行。
+本次仅查询和读回日志，没有系统上传或启动；需由用户完成本轮第二阶段命令。
+
+同日后续再次请求读取时，仍可枚举 `xnuloader`，但 `getvar product` 和直接
+`oem log` 均无响应，主机报管道错误 `e00002d6`。未发现其它 fastboot/上传进程；
+仅结束本次主机查询，没有操作手机启动或重启。未取得新的设备日志，L6/reset
+运行结果仍未知，前次 `idle` 不代表此刻状态；需手机当前画面或 USB 恢复后再判断。
+
+用户随后提供完整两阶段终端输出：绝对路径指向 `TOUCH-L6-PROBE-40079155452`，
+boot 发送/启动均 OKAY；系统卷发送 2,433,808 KB、用时 74.393 秒并返回 OKAY，
+`oem run` 也已应答。不能再将这次状态解释为未执行上传/启动请求。
+源码中 `oem run` 先回 OKAY，再调用 `run_kernel()`；L6/reset 前检在实际内核跳转前。
+因此输出仅证明请求已收到，尚不能确认 L6 调用返回或 XNU 已执行。
+当前没有其它上传/fastboot 进程，USB 无响应的具体阶段仍需手机屏幕最后几行定位。
+
+### L6 停滞照片与屏幕日志修正
+
+用户照片 `IMG_20261024_171449.jpg`（SHA-256
+`6477fdfcdc699a38255dd7917e1c144b8512b6b4ea20e6ff2b2d5b9160b7d823`）
+显示 TOUCH-L6-PROBE 菜单、19,241,296 字节载荷及 loader 的 `usb: started`。
+结合源码确认，USB 命令循环入口会设置 `screen_quiet=1`，后续 `print` 仅写入
+内存日志，不能凭这张保留画面定位 L6、reset 或内核阶段。此前请求屏幕末行
+不足以解决该观测盲区；照片也不能独立核验镜像哈希或证明 L6 写入发生。
+
+本轮仅在显式 L6 实验的 `oem run` 恢复 console，先清日志，再打印 RUN received、
+USB ACK completed、CPU ownership、reset preflight；现有 L6 写调用前增加
+calling SetLevelUv 标记。其后沿用既有 set_status、readback、reset 和 jumping
+日志，USB 无响应时可由照片确认最后一个已打印阶段。原硬件条件/操作不改，
+内核及系统输入复用。原正常模式和其它触摸模式仍按既有静默策略运行。
+本地触摸/loader 与 reset 共 29 项检查通过；云端 loader 链接及屏幕可见性待验证。

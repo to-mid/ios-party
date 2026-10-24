@@ -131,6 +131,7 @@ chiron_reset_prepare_l6(struct chiron_reset_vreg *vreg, const char *args,
         chiron_reset_read(0x03d59004) != io ||
         chiron_touch_loader_owner(args, boot, kernel) != CHIRON_TOUCH_DIRECT_BOOT_CPU)
         return 0;
+    print("CHIRON L6 TRACE: calling SetLevelUv L6=1800000\n");
     status = vreg->set_level_uv(0, 5, 1800000);
     print("CHIRON L6 PROBE: changed=1 set_status=%x; no retry or voltage rollback\n",
         (uint64_t)status);
