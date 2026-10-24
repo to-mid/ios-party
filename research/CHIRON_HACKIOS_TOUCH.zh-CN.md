@@ -335,4 +335,55 @@ GPIO87/88 mux `[5:2]` 从 GPIO 改为 I2C5 function3，保留 pull/drive；
 `changed` 标记实际尝试的寄存器，后续只读快照用于判断。
 本轮目标为 mux 读回 `0xc` 并越过 `bad=6`；按当前快照预计下一阻塞为
 `board=-24 bad=9`（reset 仍低）。不以进入桌面或触摸恢复验收。
-本地触摸、时钟及打包入口共 48 项检查通过；新内核编译与镜像交付待云端。
+本地触摸、时钟及打包入口共 48 项检查通过。源码提交
+`270fd23a2c98f17fc1cc3b39e97b0c7ebfb68c7d` 的运行 `40072910965`
+完成新 XNU/EFI 链接；本地核对产物哈希、ARM64 格式、探针代码及空未定义符号表。
+上游 make 的既有导出检查仍返回 2，不声明全部 make 目标通过。
+镜像运行 `40074591589` 成功，交付为
+`dist/chiron-driver-candidates/TOUCH-PINMUX-PROBE-40074591589/MIX2-EXPERIMENTAL-TOUCH-PINMUX-PROBE.img`，
+SHA-256 `8baa6220ddb663dcb0ee3108cafb022b4f623b3e7e0c372ace4db58ca9b43a8f`。
+容器校验、FAT 读回、新内核/探针参数绑定及容量检查通过；固件/DTB/USB 入口
+与 HK6c 一致，原系统卷复用。记录在
+`dist/chiron-touch-pinmux-probe-40074591589/local-verification.json`。
+本版 QEMU、GPIO 实机修复和触摸仍未验证，下一步由用户按同目录 `START.zh-CN.md`
+启动并取回一次 USB 日志。
+
+### pinmux 实机结果
+
+2026-10-24 已通过 USB 取回
+`out/chiron-touch-pinmux-probe-usb-20261024-round3.log`（21,600 字节，
+SHA-256 `b8b5730e698a2e6391d4ac762454f5be4394c8b92cd5ab3bdf368ca5c87cb9e9`）。
+参数为 `chiron_touch_pinmux_probe=1`，内核 UUID
+`E01BC296-D8F6-3A46-97A3-367E2B4B4C67` 与本轮产物一致。
+时钟 `result=0 step=12`；pinmux `changed=c0`，GPIO87/88 CFG 均为 `0x0c`，
+本轮 mux 假设实机通过。板级拒绝已前进至 `status=-24 failed=9 observed=3ff`：
+GPIO89 CFG=`0x203`（GPIO 输出），IO=`0`（输出锁存及输入均低），未满足
+mask=`3` / expected=`3`。主动诊断 panic 后已返回 loader。
+这是内核运行时保留快照；GIC/QUP/F01/F12 尚未检查，触摸仍未恢复。
+本次仅查询身份、导出及读取日志，没有新构建或设备启动/上传/重启。
+下一步为核对供电前提与 reset 释放时序，再做单独的最小实验。
+
+### reset 最小实验
+
+本轮只改手机 loader，复用源码运行 `40072910965` 的内核
+（SHA-256 `f4807372c55a2b782282edbe84f364bfb9b641bde3f1446e79643bffefeb6950`）。
+显式 `--reset-prepare` 在已有 pinmux 探针参数后增加 `chiron_touch_reset=1`；
+旧探针不改变。新 loader 经 PMIC VREG 公共协议只读检查 L6/L14：
+要求 revision=`0x10005`、enabled/OK 均为 1、分别为 1808000/1880000 µV，
+另读 NORTH GPIO50（`0x03932000/+4`），要求 GPIO 输出和高电平。
+电压来自固定板级 DT；实测 runtime DT 的 `disp_vddts_vreg` 确认为
+GPIO50 active-high、startup-delay=4000 µs。VREG ABI 固定至既有 Qualcomm
+参考仓库提交 `20bb8ae36c93fc16bbadda0e0a83f930c0c8a271` 的
+`boot_images/QcomPkg/Include/Protocol/EFIPmicVreg.h`，哈希记录在来源清单。
+它只证明请求的数字状态，不是外部电压测量；本机尚未确认该协议已安装。
+
+仅在交接/供电及 GPIO89 的现有 GPIO 输出低状态通过时，保持低至少 5 ms，
+重查条件，然后只置 `GPIO89_IO` bit1，等待至少 200 ms，再检查 input/output
+均高。已高时不重新脉冲。时序来自固定 DSX 驱动及板级 DT，等待同时校验
+19.2MHz 计数器实际经过时间。不调用 PMIC 写入、不改 GPIO 配置/IRQ/QUP；
+前检失败阻止内核启动并保留 USB 日志。写入后失败保留 changed 状态，
+不反复写入或重新拉低 reset。正常成功后仍由原内核执行 pinmux 和板级探针，
+目标为越过 `bad=9`，不宣称触摸恢复。
+本地 48 项相关检查通过，包括 22 个 reset 情景、ASan/UBSan、实际 loader
+ARM64 编译、旧模式隔离及显式打包证明。云端 loader 链接及镜像交付待完成；
+新功能没有 QEMU 或真机结果。

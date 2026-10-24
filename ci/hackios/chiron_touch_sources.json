@@ -4,6 +4,14 @@
   "xnu_tag": "xnu-8796.121.2",
   "status": "experimental-clock-bringup-runtime-unqualified",
   "board_probe_implemented": true,
+  "firmware_upstream": {
+    "repository": "Rivko/android-firmware-qti-sdm670",
+    "commit": "20bb8ae36c93fc16bbadda0e0a83f930c0c8a271",
+    "path": "boot_images/QcomPkg/Include/Protocol",
+    "files": {
+      "EFIPmicVreg.h": "d41e5d8608139959fb779b1eb4aacedef34afea03b318011c6fd501c82ae9bc7"
+    }
+  },
   "native_upstream": {
     "repository": "LineageOS/android_kernel_xiaomi_msm8998",
     "commit": "7231883a368604f90806e167890e00f515a9927c",
@@ -39,7 +47,8 @@
     "chiron_clock.c": "7362f7a2bb0c3bf38160d1cca38a2cb4474b58cdd8215b6f774cf79a6920f06f"
   },
   "loader_files": {
-    "chiron_touch_loader.inc": "0ba4c4adc44b0a3715cbb7ef76e94a2f00b526cb96003871dfdb31d625ec2a6f"
+    "chiron_touch_loader.inc": "0ba4c4adc44b0a3715cbb7ef76e94a2f00b526cb96003871dfdb31d625ec2a6f",
+    "chiron_touch_reset.inc": "0e31085aaded7f519edfadebc4e7d300bf4aa8971d07cd3ab24920a9b91e6adf"
   },
   "local_evidence_sha256": {
     "research/artifacts/chiron-live-20261020/runtime-tree.tar": "08e76d50d5b513614203521be6f5eeaa40966e1e24a087ea582ee3fe6e9d7718",

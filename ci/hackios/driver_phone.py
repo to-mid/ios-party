@@ -106,6 +106,16 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
                 raise ValueError("pinmux preparation requires explicit write-mode proof")
         elif proof.get("pinmux_writes", False):
             raise ValueError("probe cannot request undeclared pinmux writes")
+        if type(proof.get("reset_prepare", False)) is not bool:
+            raise ValueError("reset preparation mode must be an explicit boolean")
+        if proof.get("reset_prepare", False):
+            loader = proof.get("loader_overlay", {}).get("touch", {})
+            if (proof.get("pinmux_prepare") is not True
+                    or proof.get("reset_writes") is not True
+                    or loader.get("reset_prepare_implemented") is not True):
+                raise ValueError("reset preparation requires explicit loader write-mode proof")
+        elif proof.get("reset_writes", False):
+            raise ValueError("probe cannot request undeclared reset writes")
     if inputs["profile"]["cpu_count"] != chosen["cpu_count"]:
         raise ValueError("phone CPU profile differs")
     if proof["loader_overlay"]["cpu_limit"] != chosen["cpu_count"]:
@@ -133,6 +143,8 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
         pattern += (rb" -v chiron_touch_pinmux_probe=1" if proof.get("pinmux_prepare", False)
                     else rb" -v chiron_touch_clock_probe=1" if proof.get("clock_prepare", False)
                     else rb" -v chiron_touch_probe=1")
+        if proof.get("reset_prepare", False):
+            pattern += rb" chiron_touch_reset=1"
     if (not command.endswith(b"\0") or b"\0" in command[:-1]
             or not re.fullmatch(pattern + rb"\0", command)
             or command[:-1].decode("ascii") != proof["command_line"]
@@ -192,11 +204,14 @@ def main():
     parser.add_argument("--variant", choices=("smp2", "smp8", "touch"), required=True)
     parser.add_argument("--clock-prepare", action="store_true")
     parser.add_argument("--pinmux-prepare", action="store_true")
+    parser.add_argument("--reset-prepare", action="store_true")
     args = parser.parse_args()
     import apply_chiron_smp
     import cloud
 
     cloud.require_runner()
+    if args.reset_prepare:
+        args.pinmux_prepare = True
     if args.pinmux_prepare:
         args.clock_prepare = True
     if args.clock_prepare and args.variant != "touch":
@@ -214,7 +229,8 @@ def main():
                    "--phone", args.output])
     if chosen["touch"]:
         import apply_chiron_touch
-        overlay = {"cpu_limit": 1, "touch": apply_chiron_touch.loader_overlay(args.work)}
+        overlay = {"cpu_limit": 1, "touch": apply_chiron_touch.loader_overlay(
+            args.work, reset_prepare=args.reset_prepare)}
     else:
         overlay = apply_chiron_smp.loader_overlay(args.work, chosen["cpu_count"])
     cloud.command(["bash", "xnuloader/build.sh"], cwd=args.work)
@@ -224,6 +240,8 @@ def main():
         command_line += (" -v chiron_touch_pinmux_probe=1" if args.pinmux_prepare
                          else " -v chiron_touch_clock_probe=1" if args.clock_prepare
                          else " -v chiron_touch_probe=1")
+        if args.reset_prepare:
+            command_line += " chiron_touch_reset=1"
     kernel = args.source_build / "kernel.development.hackios"
     cloud.command([sys.executable, args.work / "xnuloader/mkpayload.py", "--usb",
                    "-o", args.output / "payload.bin", f"kernel={kernel}",
@@ -243,6 +261,8 @@ def main():
         "clock_writes": args.clock_prepare,
         "pinmux_prepare": args.pinmux_prepare,
         "pinmux_writes": args.pinmux_prepare,
+        "reset_prepare": args.reset_prepare,
+        "reset_writes": args.reset_prepare,
         "read_only": chosen["touch"] and not args.clock_prepare,
         "runtime_qualified": False, "hardware_observed": False, "phone_boot_ready": False,
     }

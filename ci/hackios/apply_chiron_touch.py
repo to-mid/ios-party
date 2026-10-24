@@ -108,8 +108,8 @@ def source_overlay(source):
     return apply(source=source)
 
 
-def loader_overlay(source):
-    """Add identity-scoped ownership metadata; no EBS or hardware reconfiguration."""
+def loader_overlay(source, reset_prepare=False):
+    """Add ownership metadata and, only when selected, the reset preflight."""
     source = Path(source)
     path = source / "xnuloader/loader.c"
     text = path.read_text()
@@ -147,6 +147,16 @@ def loader_overlay(source):
             '\t\t\t\tprint("chiron touch: CPU ownership changed before direct handoff; refusing boot\\n");\n'
             "\t\t\t\treturn 0;\n\t\t\t}\n"
             "\t\t\tjump_to_kernel(entry_va + slide, ba_pa);")
+    if reset_prepare:
+        replace('#include "chiron_touch_loader.inc"',
+                '#include "chiron_touch_loader.inc"\n#include "chiron_touch_reset.inc"')
+        replace("\tuint64_t ranges[3] = { 0, plat->io_base, plat->io_size };",
+                "\tif (chiron_reset_requested(ba->commandLine) &&\n"
+                "\t    !chiron_reset_prepare(ba->commandLine,\n"
+                "\t        READ_SYSREG(MPIDR_EL1) & 0xff00ffffffULL, kernel_mpidr)) {\n"
+                '\t\tprint("CHIRON RESET PROBE: preflight failed; kernel not started\\n");\n'
+                "\t\treturn 0;\n\t}\n"
+                "\tuint64_t ranges[3] = { 0, plat->io_base, plat->io_size };")
     manifest = json.loads(MANIFEST.read_text())
     helper = (HERE / "chiron_touch_loader.inc").read_bytes()
     abi = (DRIVER / "chiron_touch_abi.h").read_bytes()
@@ -156,6 +166,11 @@ def loader_overlay(source):
     edits = {"xnuloader/loader.c": text.encode(),
              "xnuloader/chiron_touch_loader.inc": helper,
              "xnuloader/chiron_touch_abi.h": abi}
+    if reset_prepare:
+        reset = (HERE / "chiron_touch_reset.inc").read_bytes()
+        if digest(reset) != manifest["loader_files"]["chiron_touch_reset.inc"]:
+            raise ValueError("touch reset loader manifest mismatch")
+        edits["xnuloader/chiron_touch_reset.inc"] = reset
     for relative in edits:
         target = source / relative
         if target.is_symlink() or (target.exists() and target != path):
@@ -165,6 +180,9 @@ def loader_overlay(source):
     return {"schema": "chiron-touch-overlay-v1", "kind": "loader",
             "board_probe_implemented": True, "photo_probe_boot_arg": "chiron_touch_probe=1",
             "clock_probe_boot_arg": "chiron_touch_clock_probe=1",
+            "reset_prepare_implemented": reset_prepare,
+            "reset_probe_boot_arg": "chiron_touch_reset=1" if reset_prepare else None,
+            "reset_power_policy": "read-only-L6-L14-GPIO50-preflight" if reset_prepare else None,
             "firmware_mode": "resident-not-exited",
             "ownership_assumption": "same-boot-cpu-direct-entry-and-seven-other-affinities-OFF",
             "hardware_observed": False, "runtime_qualified": False,
