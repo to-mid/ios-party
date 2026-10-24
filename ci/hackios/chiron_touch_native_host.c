@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "chiron_native.h"
+#include "chiron_board.h"
 
 static struct {
     uint32_t regs[0x410 / 4], reads, writes, barriers, delays;
@@ -12,6 +13,9 @@ static struct {
     uint64_t elapsed_us;
     int owned, scenario, running, layout_case, sensor_status, bitmap;
     unsigned transactions, sensor_reads, bitmap_reads;
+    uint32_t board_values[CB_REGISTER_COUNT], handoff[4];
+    unsigned board_reads;
+    int platform_bad, missing_handoff, read_error;
 } m;
 static const struct chiron_dsx_functions functions = {
     {0x10, 0x30, 0x31, 0x32, 1, 0},
@@ -117,6 +121,14 @@ setup(void)
     m.regs[CQ_STATE / 4] = 0x14;
     m.regs[CQ_IO_MODES / 4] = (2u << 2) | (2u << 7); /* 128-byte FIFOs */
     m.regs[CQ_STATUS / 4] = 3u << 26;
+    m.board_values[CB_AHB_VOTE] = 1u << 17;
+    m.board_values[CB_QUP_CLOCK] = 1;
+    m.board_values[CB_ROOT_CONFIG] = 1;
+    m.board_values[CB_SDA_MUX] = m.board_values[CB_SCL_MUX] = 12;
+    m.board_values[CB_RESET_CONFIG] = 512;
+    m.board_values[CB_RESET_LEVEL] = 3;
+    m.handoff[0] = 1; m.handoff[1] = 1; m.handoff[2] = 0xfe; m.handoff[3] = 1;
+    m.read_error = -1;
 }
 
 static void
@@ -228,6 +240,130 @@ static struct chiron_qup_io
 io(void)
 {
     return (struct chiron_qup_io){&m, owned, read32, write32, barrier, delay, now_us};
+}
+
+static int
+board_property(void *context, const char *path, const char *name,
+    const void **out, size_t *size)
+{
+    assert(context == &m);
+    static const char chiron[] = "chiron", redwood[] = "redwood";
+    static const uint64_t ranges[] = {0, 0x01000000, 0xff000000};
+    static const uint64_t bad_ranges[] = {0, 0x00400000, 0x3fc00000};
+    static const uint64_t gic[] = {0x16a00000, 0x10000, 0x16b00000, 0x100000};
+    static const uint32_t rotation = 0, wrong_rotation = 90;
+    if (!strcmp(path, "/arm-io") && !strcmp(name, "device_type")) {
+        if (m.platform_bad == 2) return -1;
+        *out = m.platform_bad == 1 ? redwood : chiron;
+        *size = m.platform_bad == 1 ? sizeof(redwood) :
+            m.platform_bad == 3 ? sizeof(chiron) - 1 : sizeof(chiron);
+    } else if (!strcmp(path, "/arm-io") && !strcmp(name, "ranges")) {
+        *out = m.platform_bad == 4 ? bad_ranges : ranges;
+        *size = sizeof(ranges);
+    } else if (!strcmp(path, "/arm-io/gic") && !strcmp(name, "reg")) {
+        *out = gic;
+        *size = m.platform_bad == 5 ? 24 : sizeof(gic);
+    } else if (!strcmp(path, "/chosen") && !strcmp(name, "display-rotation")) {
+        *out = m.platform_bad == 6 ? &wrong_rotation : &rotation;
+        *size = 4;
+    } else if (!strcmp(path, "/chosen") && !strcmp(name, "chiron-touch-handoff")) {
+        if (m.missing_handoff) return -1;
+        *out = m.handoff; *size = sizeof(m.handoff);
+    } else return -1;
+    return 0;
+}
+
+static int
+board_read32(void *context, uint64_t physical, uint32_t *value)
+{
+    /* Independent literals pin the actual source-derived physical addresses. */
+    static const uint64_t addresses[CB_REGISTER_COUNT] = {
+        0x00117000, 0x00152004, 0x00117004, 0x00121008, 0x00121020, 0x00121024,
+        0x03d57000, 0x03d58000, 0x03d59000, 0x03d59004, 0x17a00110,
+        0x0c179004, 0x0c179404
+    };
+    assert(context == &m);
+    m.board_reads++;
+    for (unsigned i = 0; i < CB_REGISTER_COUNT; i++) {
+        if (physical != addresses[i]) continue;
+        assert(chiron_board_register_address(i) == addresses[i]);
+        if ((int)i == m.read_error) return -1;
+        if (i == CB_QUP_STATE) *value = read32(&m, CQ_STATE);
+        else if (i == CB_QUP_STATUS) *value = read32(&m, CQ_STATUS);
+        else *value = m.board_values[i];
+        return 0;
+    }
+    assert(!"unverified physical register access");
+    return -1;
+}
+
+static int
+board_owned(void *context)
+{
+    struct chiron_board_io ops = {context, board_property, board_read32};
+    struct chiron_board_report report;
+    return chiron_board_retained(&ops, &report) == 0;
+}
+
+static void
+board_probe(void)
+{
+    struct chiron_board_report report;
+    struct chiron_board_io board = {&m, board_property, board_read32};
+    for (int i = 1; i <= 6; i++) {
+        setup(); m.platform_bad = i;
+        assert(chiron_board_probe(&board, &report) == CB_PLATFORM);
+        assert(!m.board_reads && !m.reads && !m.writes && !report.platform_valid);
+    }
+    static const struct {unsigned index; uint32_t value; int issue;} bad[] = {
+        {CB_BLSP_RESET, 1, CB_CLOCK}, {CB_AHB_VOTE, 0, CB_CLOCK},
+        {CB_AHB_CLOCK, 0x80000000, CB_CLOCK}, {CB_QUP_CLOCK, 0x80000001, CB_CLOCK},
+        {CB_QUP_CLOCK, 0, CB_CLOCK}, {CB_QUP_CLOCK, 3, CB_CLOCK},
+        {CB_ROOT_COMMAND, 1, CB_CLOCK}, {CB_ROOT_COMMAND, 0x80000000, CB_CLOCK},
+        {CB_ROOT_COMMAND, 0x10, CB_CLOCK}, {CB_ROOT_CONFIG, 0, CB_CLOCK},
+        {CB_ROOT_CONFIG, 0x101, CB_CLOCK}, {CB_ROOT_CONFIG, 0x2001, CB_CLOCK},
+        {CB_SDA_MUX, 4, CB_PINMUX}, {CB_SCL_MUX, 8, CB_PINMUX},
+        {CB_RESET_CONFIG, 0, CB_RESET}, {CB_RESET_CONFIG, 516, CB_RESET},
+        {CB_RESET_LEVEL, 1, CB_RESET}, {CB_RESET_LEVEL, 2, CB_RESET},
+        {CB_QUP_IRQ_ENABLE, 8, CB_IRQ}
+    };
+    for (unsigned i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        setup(); m.board_values[bad[i].index] = bad[i].value;
+        assert(chiron_board_probe(&board, &report) == bad[i].issue);
+        assert(report.failed_register == (int)bad[i].index && !m.writes);
+        assert((report.values[bad[i].index] & report.expected_mask) != report.expected_value);
+        assert(!(report.observed & (1u << CB_QUP_STATE)));
+    }
+    setup(); m.read_error = CB_SDA_MUX;
+    assert(chiron_board_probe(&board, &report) == CB_READ_FAILED && !m.writes);
+    assert(report.failed_register == CB_SDA_MUX);
+    setup(); m.regs[CQ_STATE / 4] = 0x17;
+    assert(chiron_board_probe(&board, &report) == CB_CONTROLLER && !m.writes);
+    setup(); m.regs[CQ_STATE / 4] = 4;
+    assert(chiron_board_probe(&board, &report) == CB_CONTROLLER && !m.writes);
+    setup(); m.regs[CQ_STATUS / 4] |= 0x100;
+    assert(chiron_board_probe(&board, &report) == CB_CONTROLLER && !m.writes);
+    setup(); m.missing_handoff = 1;
+    assert(chiron_board_probe(&board, &report) == CB_OWNERSHIP && !m.writes);
+    assert(!m.reads && m.board_reads == CB_QUP_STATE);
+    assert(report.observed == (1u << CB_QUP_STATE) - 1);
+    for (int reg = CB_QUP_STATE; reg <= CB_QUP_STATUS; reg++) {
+        setup(); m.missing_handoff = 1; m.read_error = reg;
+        assert(chiron_board_probe(&board, &report) == CB_OWNERSHIP);
+        assert(!m.reads && !m.writes && m.board_reads == CB_QUP_STATE);
+    }
+    for (unsigned i = 0; i < 4; i++) {
+        setup(); m.handoff[i] ^= 1;
+        assert(chiron_board_probe(&board, &report) == CB_OWNERSHIP && !m.writes);
+        assert(!m.reads && m.board_reads == CB_QUP_STATE);
+        assert(!(report.observed & ((1u << CB_QUP_STATE) | (1u << CB_QUP_STATUS))));
+    }
+    setup(); m.board_values[CB_QUP_IRQ_ENABLE] = 4; /* Different IRQ is irrelevant. */
+    assert(chiron_board_probe(&board, &report) == 0 && report.owner_assumed && !m.writes);
+    assert(m.reads == 2 && report.observed == (1u << CB_REGISTER_COUNT) - 1);
+    /* During our own transfer QUP can be active; only retained controls are rechecked. */
+    m.regs[CQ_STATUS / 4] |= 0x100;
+    assert(chiron_board_retained(&board, &report) == 0);
 }
 
 static void
@@ -389,6 +525,29 @@ pipeline(void)
 }
 
 static void
+retained_pipeline(void)
+{
+    struct chiron_board_report report;
+    struct chiron_board_io board = {&m, board_property, board_read32};
+    struct chiron_native native;
+    struct chiron_dsx_bus bus;
+    struct chiron_dsx device;
+    struct chiron_qup_io ops = io();
+    setup();
+    assert(chiron_board_probe(&board, &report) == 0 && !m.writes);
+    ops.handoff_ready = board_owned;
+    assert(chiron_native_bind(&native, &ops, 0, &bus) == 0 && m.writes);
+    posted = 0;
+    chiron_dsx_init(&device, &bus, post, &posted);
+    assert(chiron_dsx_start(&device) == 0);
+    assert(chiron_dsx_poll(&device) == 0 && posted == 1);
+    unsigned before = m.writes;
+    m.board_values[CB_QUP_CLOCK] = 0x80000001;
+    assert(chiron_dsx_poll(&device) < 0 && posted == 2 && !device.ready);
+    assert(m.writes == before);
+}
+
+static void
 bitmap_snapshots(void)
 {
     struct chiron_native native;
@@ -434,6 +593,8 @@ int main(int argc, char **argv)
     case 4: pipeline(); break;
     case 5: bitmap_snapshots(); break;
     case 6: elapsed_timeouts(); break;
+    case 7: board_probe(); break;
+    case 8: retained_pipeline(); break;
     default: assert(0);
     }
     return 0;

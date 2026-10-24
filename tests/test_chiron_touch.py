@@ -7,9 +7,11 @@ from pathlib import Path
 import shutil
 import struct
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -69,7 +71,7 @@ class NativeTransportTests(unittest.TestCase):
             "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
             "-I", str(touch.DRIVER), str(OVERLAY / "chiron_touch_native_host.c"),
             *[str(touch.DRIVER / name) for name in (
-                "chiron_dsx.c", "chiron_qup.c", "chiron_f12.c", "chiron_native.c")],
+                "chiron_dsx.c", "chiron_qup.c", "chiron_f12.c", "chiron_native.c", "chiron_board.c")],
             "-o", str(cls.program),
         ], check=True, capture_output=True, text=True)
 
@@ -97,6 +99,12 @@ class NativeTransportTests(unittest.TestCase):
 
     def test_elapsed_deadlines_survive_oversleep_stalled_or_regressing_clocks(self):
         self.run_case(6)
+
+    def test_board_identity_exact_clock_pin_irq_masks_and_read_only_refusal(self):
+        self.run_case(7)
+
+    def test_retained_board_ready_path_and_clock_loss_without_unsafe_cleanup(self):
+        self.run_case(8)
 
 
 class OverlayTests(unittest.TestCase):
@@ -129,6 +137,8 @@ class OverlayTests(unittest.TestCase):
         self.assertTrue(result["native_i2c_transport_implemented"])
         self.assertTrue(result["f12_layout_validator_implemented"])
         self.assertFalse(result["native_i2c_hardware_enabled"])
+        self.assertTrue(result["board_probe_implemented"])
+        self.assertEqual(result["read_only_probe_boot_arg"], "chiron_touch_probe=1")
         self.assertEqual(result["kind"], "source")
         self.assertEqual((self.folder / prefix / "redwood_input.c").read_bytes(), before)
         self.assertEqual(set(result["result"]), {str(prefix / name) for name in touch.COPIES})
@@ -178,15 +188,16 @@ class OverlayTests(unittest.TestCase):
         for name, expected in MANIFEST["overlay_files"].items():
             self.assertEqual(touch.digest((touch.DRIVER / name).read_bytes()), expected)
 
-    def test_xnu_adapter_host_syntax_and_disabled_transport(self):
+    def test_xnu_adapter_identity_sleep_and_synchronous_read_only_probe(self):
         prefix = self.copy_contexts(XNU)
         touch.kernel_overlay(self.folder)
         compiler = shutil.which("cc")
         if not compiler:
             self.skipTest("host C compiler unavailable")
         includes = self.folder / "host"
-        for name in ("kern/clock.h", "kern/sched_prim.h", "kern/thread.h", "libkern/libkern.h",
-                     "mach/mach_types.h", "pexpert/pexpert.h", "sys/redwood_input.h", "sys/systm.h"):
+        for name in ("kern/clock.h", "kern/debug.h", "kern/sched_prim.h", "kern/thread.h", "libkern/libkern.h",
+                     "mach/mach_types.h", "pexpert/pexpert.h", "pexpert/device_tree.h",
+                     "sys/redwood_input.h", "sys/systm.h"):
             dest = includes / name
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_text("")
@@ -197,9 +208,11 @@ class OverlayTests(unittest.TestCase):
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <setjmp.h>
 #define CHIRON_PORT 1
 #define KERN_SUCCESS 0
 #define NSEC_PER_MSEC 1000000
+#define NSEC_PER_USEC 1000
 #define THREAD_UNINT 2
 #define THREAD_WAITING -1
 #define THREAD_TIMED_OUT 1
@@ -211,12 +224,64 @@ typedef int kern_return_t;
 typedef int wait_result_t;
 typedef void *thread_t;
 typedef void *event_t;
+typedef uintptr_t vm_offset_t;
+typedef uintptr_t vm_size_t;
+typedef void *DTEntry;
+#define kSuccess 0
+static int maps, valid_platform, probe_mode, panics;
+static jmp_buf panic_env;
+static const char *panic_format;
+static uint32_t gcc_words[0xb0000/4], gpio_words[0x3000/4];
+static uint32_t gic_words[0x10000/4], qup_words[0x600/4];
+static uint32_t gcc_before[0xb0000/4], gpio_before[0x3000/4];
+static uint32_t gic_before[0x10000/4], qup_before[0x600/4];
+static int SecureDTLookupEntry(void *root, const char *path, DTEntry *entry) {
+    (void)root;
+    if (!valid_platform) return -1;
+    *entry = (void *)path; return 0;
+}
+static int SecureDTGetProperty(DTEntry entry, const char *name, const void **data, unsigned *size) {
+    const char *path = entry;
+    static const char type[] = "chiron";
+    static const uint64_t ranges[] = {0, 0x01000000, 0xff000000};
+    static const uint64_t gic[] = {0x16a00000, 0x10000, 0x16b00000, 0x100000};
+    static const uint32_t proof[] = {1, 1, 0xfe, 1}, rotation = 0;
+    if (!strcmp(path, "/arm-io") && !strcmp(name, "device_type")) {
+        *data = type; *size = sizeof(type);
+    } else if (!strcmp(path, "/arm-io") && !strcmp(name, "ranges")) {
+        *data = ranges; *size = sizeof(ranges);
+    } else if (!strcmp(path, "/arm-io/gic") && !strcmp(name, "reg")) {
+        *data = gic; *size = sizeof(gic);
+    } else if (!strcmp(path, "/chosen") && !strcmp(name, "display-rotation")) {
+        *data = &rotation; *size = sizeof(rotation);
+    } else if (!strcmp(path, "/chosen") && !strcmp(name, "chiron-touch-handoff")) {
+        *data = proof; *size = sizeof(proof);
+    } else return -1;
+    return 0;
+}
+vm_offset_t ml_io_map(vm_offset_t physical, vm_size_t size) {
+    assert(valid_platform);
+    maps++;
+    if (physical == 0x00100000 && size == sizeof(gcc_words)) return (uintptr_t)gcc_words;
+    if (physical == 0x03d57000 && size == sizeof(gpio_words)) return (uintptr_t)gpio_words;
+    if (physical == 0x17a00000 && size == sizeof(gic_words)) return (uintptr_t)gic_words;
+    if (physical == 0x0c179000 && size == sizeof(qup_words)) return (uintptr_t)qup_words;
+    assert(0); return 0;
+}
+static void panic(const char *format, ...) {
+    panic_format = format; panics++; longjmp(panic_env, 1);
+}
+static uint64_t mach_absolute_time(void) { return 1000000; }
+static void absolutetime_to_nanoseconds(uint64_t ticks, uint64_t *ns) { *ns = ticks; }
 static int enabled, starts, posts, waits, blocks, waiting_result = THREAD_WAITING;
 static event_t wait_event;
 static bool PE_parse_boot_argn(const char *name, void *out, int size) {
-    assert(strcmp(name, "chiron_touch") == 0 && size == 4);
-    *(uint32_t *)out = (uint32_t)enabled;
-    return enabled != 0;
+    assert(size == 4);
+    if (!strcmp(name, "chiron_touch_probe")) {
+        *(uint32_t *)out = (uint32_t)probe_mode; return probe_mode != 0;
+    }
+    assert(!strcmp(name, "chiron_touch"));
+    *(uint32_t *)out = (uint32_t)enabled; return enabled != 0;
 }
 static int kernel_thread_start(void (*fn)(void *, wait_result_t), void *arg, thread_t *t) {
     (void)fn; (void)arg; (void)t; starts++; return 1;
@@ -240,22 +305,126 @@ static void redwood_touch_post(uint32_t t, uint32_t f, uint32_t x, uint32_t y) {
 #include "redwood_goodix.c"
 int main(void) {
     for (enabled = 0; enabled < 4; enabled++) redwood_goodix_init();
-    assert(starts == 0 && posts == 0 && waits == 0 && blocks == 0);
+    assert(starts == 0 && posts == 0 && waits == 0 && blocks == 0 && maps == 0);
     chiron_touch_sleep();
     assert(waits == 1 && blocks == 1 && wait_event == (event_t)&chiron_touch);
     waiting_result = THREAD_TIMED_OUT;
     chiron_touch_sleep();
     assert(waits == 2 && blocks == 1);
+    enabled = 1; probe_mode = 1;
+    if (!setjmp(panic_env)) {
+        redwood_goodix_init();
+        assert(!"probe must stop before GUI");
+    }
+    assert(panics == 1 && maps == 0 && starts == 0);
+    assert(strstr(panic_format, "CHIRON TOUCH PROBE READ ONLY"));
+    enabled = 0; /* Photo payload has no chiron_touch=1; probe must still run. */
+    valid_platform = 1;
+    gcc_words[0x52004/4] = 1u << 17;
+    gcc_words[0x21008/4] = 1;
+    gcc_words[0x21024/4] = 1;
+    gpio_words[0] = gpio_words[0x1000/4] = 12;
+    gpio_words[0x2000/4] = 512;
+    gpio_words[0x2004/4] = 3;
+    qup_words[4/4] = 0x14;
+    qup_words[0x404/4] = 3u << 26;
+    qup_words[0xc/4] = 0x12345678; /* Opening/resetting QUP would overwrite this. */
+    memcpy(gcc_before, gcc_words, sizeof(gcc_words));
+    memcpy(gpio_before, gpio_words, sizeof(gpio_words));
+    memcpy(gic_before, gic_words, sizeof(gic_words));
+    memcpy(qup_before, qup_words, sizeof(qup_words));
+    if (!setjmp(panic_env)) {
+        redwood_goodix_init();
+        assert(!"ready probe must still stop without transport");
+    }
+    assert(panics == 2 && maps == 4 && starts == 0 && posts == 0);
+    assert(chiron_board_report.issue == 0);
+    assert(!memcmp(gcc_before, gcc_words, sizeof(gcc_words)));
+    assert(!memcmp(gpio_before, gpio_words, sizeof(gpio_words)));
+    assert(!memcmp(gic_before, gic_words, sizeof(gic_words)));
+    assert(!memcmp(qup_before, qup_words, sizeof(qup_words)));
     return 0;
 }
 """)
         program = self.folder / "adapter"
         subprocess.run([compiler, "-std=c11", "-Wall", "-Wextra", "-Werror",
+                        "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
                         "-I", str(includes), "-I", str(self.folder / prefix),
                         str(unit), "-o", str(program)], check=True, capture_output=True, text=True)
         result = subprocess.run([str(program)], capture_output=True, text=True, check=True)
-        self.assertIn("BLOCKED", result.stdout)
+        self.assertIn("platform refused before MMIO", result.stdout)
         self.assertIn("hardware untouched", result.stdout)
+        self.assertIn("read-only, no transport or worker", result.stdout)
+
+
+class LoaderHandoffTests(unittest.TestCase):
+    def test_actual_loader_owner_policy_never_takes_over_active_firmware_cpus(self):
+        compiler = shutil.which("cc")
+        if not compiler:
+            self.skipTest("host C compiler unavailable")
+        with tempfile.TemporaryDirectory(prefix="chiron-touch-owner-") as folder:
+            program = Path(folder) / "owner"
+            subprocess.run([compiler, "-std=c11", "-Wall", "-Wextra", "-Werror",
+                            "-I", str(touch.DRIVER), "-I", str(OVERLAY),
+                            str(OVERLAY / "chiron_touch_loader_host.c"), "-o", str(program)],
+                           check=True, capture_output=True, text=True)
+            subprocess.run([str(program)], check=True)
+
+    def exercise_loader(self, phone):
+        if not (PINNED / "xnuloader/loader.c").exists():
+            self.skipTest("fixed loader source unavailable")
+        base_spec = importlib.util.spec_from_file_location("touch_base", OVERLAY / "apply_chiron.py")
+        base = importlib.util.module_from_spec(base_spec)
+        base_spec.loader.exec_module(base)
+        modules = {}
+        with mock.patch.dict(sys.modules, {"apply_chiron": base}):
+            for name in ("apply_chiron_usb", "apply_chiron_memory"):
+                spec = importlib.util.spec_from_file_location(name, OVERLAY / (name + ".py"))
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                modules[name] = module
+        with tempfile.TemporaryDirectory(prefix="chiron-touch-loader-") as folder:
+            source = Path(folder)
+            shutil.copytree(PINNED / "xnuloader", source / "xnuloader")
+            profile = json.loads((OVERLAY / "chiron-profile.json").read_text())
+            base.loader_overlay(source, profile)
+            if phone:
+                modules["apply_chiron_usb"].apply(source)
+                modules["apply_chiron_memory"].apply(source)
+            report = touch.loader_overlay(source)
+            self.assertEqual(report["firmware_mode"], "resident-not-exited")
+            self.assertEqual(len(report["result"]), 3)
+            with self.assertRaisesRegex(ValueError, "already applied"):
+                touch.loader_overlay(source)
+            compiler = shutil.which("clang")
+            if compiler:
+                result = subprocess.run([
+                    compiler, "--target=aarch64-unknown-windows", "-ffreestanding",
+                    "-fno-builtin", "-fno-stack-protector", "-fshort-wchar",
+                    "-mgeneral-regs-only", "-O1", "-Wall", "-Wextra",
+                    "-Wno-unused-parameter", "-c", "loader.c", "-o", "loader.obj",
+                ], cwd=source / "xnuloader", capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                obj = (source / "xnuloader/loader.obj").read_bytes()
+                self.assertGreater(len(obj), 10000)
+                self.assertEqual(struct.unpack_from("<H", obj)[0], 0xaa64)  # ARM64 COFF
+                linker = os.environ.get("CHIRON_TOUCH_LLD_LINK") or shutil.which("lld-link")
+                if linker:
+                    result = subprocess.run([
+                        linker, "/subsystem:efi_application", "/entry:efi_main",
+                        "/nodefaultlib", "/base:0xA1000000", "/out:loader.efi", "loader.obj",
+                    ], cwd=source / "xnuloader", capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    image = (source / "xnuloader/loader.efi").read_bytes()
+                    pe = struct.unpack_from("<I", image, 0x3c)[0]
+                    self.assertEqual(image[pe:pe + 4], b"PE\0\0")
+                    self.assertEqual(struct.unpack_from("<H", image, pe + 4)[0], 0xaa64)
+
+    def test_base_loader_overlay_and_full_arm64_compile(self):
+        self.exercise_loader(phone=False)
+
+    def test_phone_loader_composes_after_usb_memory_and_full_arm64_compile(self):
+        self.exercise_loader(phone=True)
 
 
 class MeasuredEvidenceTests(unittest.TestCase):

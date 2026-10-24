@@ -202,5 +202,34 @@ LD、DSYMUTIL、STRIP，并打印 built kernel。实验构建沿用原项目的�
 
 构建报告明确保留 `runtime_qualified=false`、`hardware_observed=false` 和
 `phone_boot_ready=false`。原 `chiron.py` 的 images、qemu、summarize 入口拒绝
-实验 variant，避免把旧单核桌面资格用于新源码。生成可测手机镜像仍需要完整
-构建通过、替换 payload 中的 CPU 参数、匹配新版 loader/内核并独立进行运行验证。
+实验 variant，避免把旧单核桌面资格用于新源码。源码实验镜像使用下述独立路径，
+绑定新内核、loader 与 CPU 参数，运行资格仍需独立验证。
+
+## 独立临时镜像
+
+运行 `40053115918` 已从上述真实源码产物分别生成双核、八核镜像。
+`driver_phone.py` 先校验源构建编号、实际内核哈希、SMP ABI 和空未定义符号表，
+再按 base→USB→memory→SMP 顺序编译手机 loader，生成单一 `cpus=2/8` 参数的
+XNUP。打包器必须显式使用 `--source-experiment`，逐项读取实际 XNUP 的内核、
+小根卷、USB 模式与命令行，拒绝继承旧桌面资格。普通基线打包门槛保持不变。
+
+两份镜像均为 26,697,728 字节，菜单明确显示 `EXPERIMENTAL SMP2/8`。
+交付目录：
+
+- `dist/chiron-driver-candidates/SMP2-40053115918/`，含双核镜像、manifest、
+  上传工具与 `START.zh-CN.md`。
+- `dist/chiron-driver-candidates/SMP8-40053115918/`，含独立八核实验与对应说明。
+
+| 候选 | 镜像 SHA-256 |
+| --- | --- |
+| SMP2 | `b1697b7f74633f39084754fe8523e24f26320f08279d166896930606337faedc` |
+| SMP8 | `dfedd0eaebabd5df1fc020be71c531a0cd4351136a65c703c94c9e9f9be4ef46` |
+
+本地静态复核 `dist/chiron-smp-candidates-40053115918/local-verification.json`
+验证 Android boot SHA-1、整镜像 SHA-256、FAT 中的入口/loader/XNUP，
+并将 payload 内核与此前独立校验的源内核逐字节哈希绑定。
+实际 UEFI body、附加 DTB 和 USB 入口与 HK6c 一致；仍复用同一原系统卷，
+上传工具会再次计算实际大卷 SHA-256。
+
+优先收集双核启动反馈，再测八核。两份镜像没有可用触摸，
+没有实机在线核数或稳定性结果；固件和静态校验不能代替这些观察。

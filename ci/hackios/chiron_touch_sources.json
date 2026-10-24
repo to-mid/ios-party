@@ -2,14 +2,20 @@
   "schema": "chiron-touch-sources-v1",
   "hackios_commit": "8e61187098f2c26c5daee8f9f72b6416aa64b9ab",
   "xnu_tag": "xnu-8796.121.2",
-  "status": "blocked-board-handoff-and-runtime-qualification",
+  "status": "experimental-retained-handoff-runtime-unqualified",
+  "board_probe_implemented": true,
   "native_upstream": {
     "repository": "LineageOS/android_kernel_xiaomi_msm8998",
     "commit": "7231883a368604f90806e167890e00f515a9927c",
     "files": {
       "drivers/i2c/busses/i2c-msm-v2.c": "6224b5b2e3822350d8c917d5f47dc3fb8594b2d38e5aa63494d314b988b17211",
       "include/linux/i2c/i2c-msm-v2.h": "a0cb8a616ba727efcd3d0f42e017cdfc8c7fa241759b648dbee2eec1d687d47a",
-      "drivers/input/touchscreen/synaptics_dsx_force/synaptics_dsx_core.c": "370cbfbc5fdea261030a0c7ad73b2a0ad5eb54d2b9ebda9726ded147a689c72f"
+      "drivers/input/touchscreen/synaptics_dsx_force/synaptics_dsx_core.c": "370cbfbc5fdea261030a0c7ad73b2a0ad5eb54d2b9ebda9726ded147a689c72f",
+      "drivers/clk/msm/clock-gcc-8998.c": "409bb76da8b033df94c63884d0cd2596b645c3d3111f8576f91f66c954447452",
+      "drivers/clk/msm/clock-local2.c": "a467ad3783a14c5f69c87834d042a9fdc4d85f2933ec3e5908824b42e29bc3e3",
+      "include/dt-bindings/clock/msm-clocks-hwio-8998.h": "38b29e3327e977d2d8e405ff73d8a856536fd0ef8d9e1c0c44ea32394ac86461",
+      "drivers/pinctrl/qcom/pinctrl-msm8998.c": "0c3408a1101be576557685b46563a6745f0eae6ea0d5a3d501af4f4340cfcf5a",
+      "drivers/input/touchscreen/synaptics_dsx_force/synaptics_dsx_i2c.c": "c4c00c9fa61a5c8b4cb87285ba99214aeff1d03df37e7c3ecfa7773e89101f96"
     }
   },
   "pinned_hackios_files": {
@@ -18,14 +24,20 @@
   },
   "overlay_files": {
     "chiron_dsx.c": "f2a42d1e647ee0458aafb8e62043b4074e8af665bdc0fc6d5e8ff3923956e5ad",
-    "chiron_dsx.h": "896b60f3d4964fdaf92d273df336104362dfa070f6d370a211936cb31aae10b8",
-    "chiron_xnu.c": "67d7e50e8e87ba92fc9b2c472d8d3d607b50e5547880afada3a5521b971bbf8a",
+    "chiron_dsx.h": "4f1e3dd4999d2e59a79b026a040062579bf4eb0f2569f4814891ca26ccc75f59",
+    "chiron_xnu.c": "3d916140334705f3b8fe1c515587963c0a66a5ad3da088f1c9fab25dfee3eaf0",
     "chiron_qup.c": "2f9b79a6490e101e14d5ccb7a8f0a844e44bb53d086b83aa53f33e43e7b7a8c4",
-    "chiron_qup.h": "c07c922cfadc35e83fa8db3beab4ecd97f481dbfd651d897dfa936b6eaf796a5",
+    "chiron_qup.h": "7f2901382b6597664980fd6f2678ced105c067b908bcccf640c8b1ee736a396c",
     "chiron_f12.c": "49d8e1f248bce075458e8f57a2c9b9935d7df2ceeaf250decf05d83864ecdde9",
     "chiron_f12.h": "1043ac19984140bba10c6e8a7e4fde6e2b93bcb80be166b17c368b5a57ca9c90",
     "chiron_native.c": "b7e8ce7d818c256bbebd7c892e643813a1e0845ca8bcee0f2b2a1342a453c07d",
-    "chiron_native.h": "e6cb715f15cfd35020997180f9fbf3a778eaf1d338d2bf91a130dfeae6f8ef42"
+    "chiron_native.h": "cb3c3968cb3f6969869bf22fe88e8d825ff42a3f6b8cfa15f978c4bb19520cdd",
+    "chiron_board.c": "a95a3397a61b92413cea117a0aab0d8acdff92e04a2b0b548f2e26c35f128d0e",
+    "chiron_board.h": "d1fe010ea374f51897cf5af4a74efd16996cd240c91a073f20e9b5de29e8cae7",
+    "chiron_touch_abi.h": "b92b5b5afbb17e10d48e92a5a402cba72e20a04f2ca8f964750f8ee56b59f565"
+  },
+  "loader_files": {
+    "chiron_touch_loader.inc": "a63e3669b912c304849e99dffb3f408755eb04ae2d33f5d8b3ddb3c8fb1a99e3"
   },
   "local_evidence_sha256": {
     "research/artifacts/chiron-live-20261020/runtime-tree.tar": "08e76d50d5b513614203521be6f5eeaa40966e1e24a087ea582ee3fe6e9d7718",
@@ -45,7 +57,14 @@
     "/private/tmp/chiron-i2c-msm-v2.h": "a0cb8a616ba727efcd3d0f42e017cdfc8c7fa241759b648dbee2eec1d687d47a",
     "/private/tmp/chiron-synaptics-dsx-core.c": "370cbfbc5fdea261030a0c7ad73b2a0ad5eb54d2b9ebda9726ded147a689c72f",
     "/private/tmp/chiron-port-xnu/osfmk/kern/clock.c": "001630fcf2089f7f8df7c39ee79f8ba9279b84aa06ec5d8883b016eb15fdc5b1",
-    "/private/tmp/chiron-port-xnu/osfmk/kern/sched_prim.h": "ff834a30d9aaa6cbc14fa563f9e22fc29acb70f00ea83b96d3fb7b4394fa3ac6"
+    "/private/tmp/chiron-port-xnu/osfmk/kern/sched_prim.h": "ff834a30d9aaa6cbc14fa563f9e22fc29acb70f00ea83b96d3fb7b4394fa3ac6",
+    "/private/tmp/chiron-clock-gcc-8998.c": "409bb76da8b033df94c63884d0cd2596b645c3d3111f8576f91f66c954447452",
+    "/private/tmp/chiron-clock-local2.c": "a467ad3783a14c5f69c87834d042a9fdc4d85f2933ec3e5908824b42e29bc3e3",
+    "/private/tmp/chiron-msm-clocks-hwio-8998.h": "38b29e3327e977d2d8e405ff73d8a856536fd0ef8d9e1c0c44ea32394ac86461",
+    "/private/tmp/chiron-pinctrl-msm8998.c": "0c3408a1101be576557685b46563a6745f0eae6ea0d5a3d501af4f4340cfcf5a",
+    "/private/tmp/chiron-synaptics-dsx-i2c.c": "c4c00c9fa61a5c8b4cb87285ba99214aeff1d03df37e7c3ecfa7773e89101f96",
+    "/private/tmp/chiron-hackios-reuse/kernel/xnuloader/loader.c": "95ce0c52edb90d95c972a6cd865203e2b1d037289f5093c59196e6eb993578c6",
+    "/private/tmp/ios-party-research/edk2/Silicon/QC/Msm8998/QcomPkg/Library/PlatformMemoryMapLib/PlatformMemoryMapLib.c": "4d482c0af9eb6f01d49c722e4ed76850824a6833c2f587b77e41d952aed9f081"
   },
   "measured_board": {
     "bus": 5,
@@ -59,6 +78,8 @@
     "interrupt_flags": 8200,
     "runtime_driver": "synaptics_dsi_force",
     "firmware_build_id": 2676394,
-    "f12_report_layout_measured": false
+    "f12_report_layout_measured": false,
+    "retained_board_registers_measured": false,
+    "axis_policy": "measured-DT-absence-of-swap-and-flip-properties-and-ADT-rotation-zero"
   }
 }

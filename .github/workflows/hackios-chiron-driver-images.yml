@@ -1,12 +1,18 @@
-name: MIX2 experimental SMP phone images
+name: MIX2 experimental driver phone images
 
 on:
-  push:
-    branches: ['codex/chiron-parallel-drivers']
-    paths:
-      - '.github/workflows/hackios-chiron-driver-images.yml'
-      - 'ci/hackios/driver_phone.py'
   workflow_dispatch:
+    inputs:
+      variant:
+        description: Source experiment to package
+        type: choice
+        required: true
+        default: smp
+        options: [smp, touch-probe]
+      touch_source_run:
+        description: Successful touch source build run for touch-probe
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -14,16 +20,19 @@ permissions:
 
 jobs:
   image:
-    name: Experimental SMP${{ matrix.cpu_count }}
+    name: Experimental ${{ inputs.variant == 'touch-probe' && 'TOUCH-PROBE' || format('SMP{0}', matrix.cpu_count) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
-        cpu_count: [2, 8]
+        cpu_count: ${{ fromJSON(inputs.variant == 'touch-probe' && '[1]' || '[2,8]') }}
     env:
       GH_TOKEN: ${{ github.token }}
       PYTHONDONTWRITEBYTECODE: '1'
+      DRIVER_VARIANT: ${{ inputs.variant == 'touch-probe' && 'touch' || format('smp{0}', matrix.cpu_count) }}
+      SOURCE_RUN: ${{ inputs.variant == 'touch-probe' && inputs.touch_source_run || '39964860075' }}
+      IMAGE_LABEL: ${{ inputs.variant == 'touch-probe' && 'TOUCH-PROBE' || format('SMP{0}', matrix.cpu_count) }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -36,8 +45,9 @@ jobs:
         run: python3 -B -m unittest discover -s tests -p 'test_chiron_driver_phone.py' -v
       - name: Download the source build and unchanged boot inputs
         run: |
-          gh run download 39964860075 --repo "$GITHUB_REPOSITORY" \
-            --name chiron-driver-source-smp${{ matrix.cpu_count }}-39964860075 --dir dist/driver-source
+          case "$SOURCE_RUN" in *[!0-9]*|'') exit 2;; esac
+          gh run download "$SOURCE_RUN" --repo "$GITHUB_REPOSITORY" \
+            --name "chiron-driver-source-$DRIVER_VARIANT-$SOURCE_RUN" --dir dist/driver-source
           gh run download 39951169904 --repo "$GITHUB_REPOSITORY" \
             --name chiron-memory-entry-39951169904 --dir dist/chiron-entry
           gh run download 39951169904 --repo "$GITHUB_REPOSITORY" \
@@ -49,8 +59,8 @@ jobs:
       - name: Compile the phone loader and bind the fresh kernel payload
         run: |
           python3 ci/hackios/driver_phone.py \
-            --source-build dist/driver-source --source-run 39964860075 \
-            --runtime dist/chiron-runtime --variant smp${{ matrix.cpu_count }} \
+            --source-build dist/driver-source --source-run "$SOURCE_RUN" \
+            --runtime dist/chiron-runtime --variant "$DRIVER_VARIANT" \
             --work "$RUNNER_TEMP/driver-phone-loader" --output "$GITHUB_WORKSPACE/dist/driver-phone"
       - name: Package an explicitly unqualified temporary boot image
         run: |
@@ -60,14 +70,14 @@ jobs:
             --qualification dist/driver-phone/driver-experiment.json \
             --firmware dist/chiron-memory-firmware/chiron-unixnu.fd \
             --memory-policy dist/chiron-memory-firmware/memory-policy.json \
-            --source-experiment --title "EXPERIMENTAL SMP${{ matrix.cpu_count }}" \
-            --image-name "MIX2-EXPERIMENTAL-SMP${{ matrix.cpu_count }}.img" \
+            --source-experiment --title "EXPERIMENTAL $IMAGE_LABEL" \
+            --image-name "MIX2-EXPERIMENTAL-$IMAGE_LABEL.img" \
             --output dist/driver-image
           cp tools/start_chiron_hackios.py dist/driver-image/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: MIX2-EXPERIMENTAL-SMP${{ matrix.cpu_count }}-${{ github.run_id }}
+          name: MIX2-EXPERIMENTAL-${{ env.IMAGE_LABEL }}-${{ github.run_id }}
           path: |
             dist/driver-image/
             dist/driver-phone/driver-experiment.json

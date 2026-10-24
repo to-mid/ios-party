@@ -2,7 +2,7 @@
 
 日期：2026-10-23，Asia/Shanghai。
 
-本轮交付包含**原生 QUP v2 FIFO 传输、只读 F12 query/control 验证器、事件生产者和测试**，不是已在实机上工作的触摸驱动。控制器与布局解析源码已补齐；剩余阻塞是退出固件后的板级交接证据，以及实际设备是否满足验证器支持的配置。当前即使选择该覆盖层并传入 `chiron_touch=1`，XNU 入口仍只打印 `BLOCKED`，不映射 MMIO、不访问 I2C、不创建轮询线程。
+本轮交付包含**原生 QUP v2 FIFO、F12 验证器、只读板级探针、条件放行 provider、loader 所有权检查和测试**，尚未经过实机验收。默认关闭。`chiron_touch=1` 在严格身份、保留硬件和交接条件全部满足后才初始化 QUP；不满足时打印具体寄存器、期待 mask/value 和拒绝原因。`chiron_touch_probe=1` 优先执行同步只读诊断，然后在 GUI 前触发带快照的原生 panic，**不创建 worker、不调用 native bind、不打开或复位 QUP**。
 
 本轮没有连接设备，没有 boot、flash、reboot 或硬件寄存器操作；没有修改共享集成脚本、工作流、设备证据报告或 SMP 文件。
 
@@ -21,6 +21,7 @@
 | 复位、IRQ | 同子节点 `synaptics,reset-gpio` / `synaptics,irq-gpio` | GPIO89、GPIO125；IRQ flags `0x2008` |
 | 控制器中断 | 控制器节点 `interrupts` | `<0 99 0>`；与触控 GPIO125 不同 |
 | 时钟描述 | 控制器 `qcom,clk-freq-in/out` | 输入 19.2 MHz，目标 I2C 400 kHz；这不证明 XNU 接管时 GCC 时钟仍运行 |
+| GCC / TLMM 范围 | runtime DT 的 `soc/qcom,gcc@100000/reg`、`soc/pinctrl@03400000/reg` | `0x00100000 + 0xb0000`、`0x03400000 + 0xc00000`，与本地 EDK2 memory map 相符 |
 
 `125` 是 TLMM GPIO 编号，不能直接送给 GIC 当作 SPI INTID。没有配置此中断。本实现未来的轮询路径固定 20 ms，不依赖 IRQ 配置或中断电平。
 
@@ -54,8 +55,12 @@ EDK2 资料用于交叉核对协议边界；本轮后续取得了下述完整厂
 | `drivers/i2c/busses/i2c-msm-v2.c` | `/private/tmp/chiron-i2c-msm-v2.c` | `i2c_msm_qup_init`、`i2c_msm_qup_xfer_init_reset_state`、FIFO 状态切换、tag 组合、完成/错误处理 |
 | `include/linux/i2c/i2c-msm-v2.h` | `/private/tmp/chiron-i2c-msm-v2.h` | QUP 寄存器偏移、状态位、服务标志、v2 tag、FIFO 大小编码 |
 | `drivers/input/touchscreen/synaptics_dsx_force/synaptics_dsx_core.c` | `/private/tmp/chiron-synaptics-dsx-core.c` | F01 状态/身份、`synaptics_rmi4_f12_init`、Query5/6/8、Ctrl8/20/23/28、Data1/Data15、指头对象结构 |
+| `drivers/clk/msm/clock-gcc-8998.c`、`include/dt-bindings/clock/msm-clocks-hwio-8998.h` | `/private/tmp/chiron-clock-gcc-8998.c`、`chiron-msm-clocks-hwio-8998.h` | QUP5/AHB 的寄存器、AP vote17、XO=19.2 MHz 与 divider 编码 |
+| `drivers/clk/msm/clock-local2.c` | `/private/tmp/chiron-clock-local2.c` | branch enable/off、root update/dirty/off、HID divider/source/mode mask |
+| `drivers/pinctrl/qcom/pinctrl-msm8998.c` | `/private/tmp/chiron-pinctrl-msm8998.c` | EAST tile、GPIO87/88 的 function index3、GPIO mux/OE/input/output 位 |
+| `drivers/input/touchscreen/synaptics_dsx_force/synaptics_dsx_i2c.c` | `/private/tmp/chiron-synaptics-dsx-i2c.c` | DT 的 swap/x-flip/y-flip 布尔默认值 |
 
-头文件和 Synaptics 核心通过 GitHub Contents API 的 `Accept: application/vnd.github.raw+json` 获取；使用上述提交，下载后按字节哈希固定。没有把 Linux 的时钟/PM/pinctrl 框架直接替换成推测的裸寄存器写。
+新增上游文件通过 GitHub Contents API 的 `Accept: application/vnd.github.raw+json` 获取，使用上述提交，下载后按字节哈希固定。该下游树的 GCC 文件实际位于 `drivers/clk/msm/clock-gcc-8998.c`，不是上游主线的 `drivers/clk/qcom/gcc-msm8998.c`。没有把 Linux 的时钟/PM/pinctrl 框架替换成未经验证的裸寄存器写。
 
 ## 接入现有 HID 路径
 
@@ -91,7 +96,7 @@ EDK2 资料用于交叉核对协议边界；本轮后续取得了下述完整厂
 `drivers/chiron-touch/chiron_qup.{h,c}`：
 
 - 是可执行的原生寄存器序列，不是 UEFI 转发或回调占位；用 `read32/write32/barrier/delay_us/now_us` 对接 XNU MMIO 适配器或主机寄存器模型。`now_us` 必须提供单调的已流逝微秒，不能用请求的 sleep 时长累加来代替。
-- `handoff_ready` 是必须由板级代码提供的信任边界，不是用户 boot-arg。缺少它、返回不为 1 或 MMIO 回调不完整时，不读写任何 MMIO。它必须保证整个事务期间总线独占、QUP IRQ 在 GIC 屏蔽、iface 时钟已开启且 QUP 输入时钟为 19.2 MHz、GPIO87/88 复用、触控供电/reset 和映射均已验证。
+- `handoff_ready` 由新增板级 provider 提供，不是可直接强制为真的 boot-arg。底层缺少它、返回不为 1 或 MMIO 回调不完整时，不访问 QUP。provider 自身会只读 GCC/TLMM/GIC，检查保留条件；初次还检查 QUP idle/master 状态。所有权假设另见下节，并没有声称 Boot Services 已退出。
 - 在获得交接后检查 master-generation/valid 位、总线闲置和 SDA/SCL、FIFO 大小；未知模式或非空闲总线在初始化写之前拒绝。
 - 使用源码确认的 QUP 软件复位和初始化，FIFO 事务为 RESET→设置计数/pack-unpack→RUN→400 kHz divider→PAUSE 装入 tag→RUN→轮询完成与总线释放→读 FIFO→RESET。400 kHz divider 为上游表中的 FS=28、HT=14；没有写 GCC 时钟、TLMM 或 panel reset。
 - 页选择发 `81 40 83 02 ff PAGE`；寄存器读发 `81 40 82 01 REG 81 41 87 LEN`，即无 STOP 的指针写、repeated START、读后 STOP。输入 FIFO 丢弃上游定义的两个 tag 字节。只允许地址 `0x20`、页 0..4、读最多 80 字节，且不跨 `0xff` 页选择寄存器。
@@ -109,23 +114,60 @@ EDK2 资料用于交叉核对协议边界；本轮后续取得了下述完整厂
 
 `drivers/chiron-touch/chiron_xnu.c`：
 
-- 仅可在 `CHIRON_PORT` 构建中编译，仅 `chiron_touch=1` 请求启用。
-- 原生 FIFO、F12 与连接代码全部编译进原有触控对象，但当前 `chiron_native_transport()` 仍明确返回 `CHIRON_DSX_NO_TRANSPORT`，原因是缺少板级交接提供者。没有弱符号后门、自动猜测 GPIO、直接复用 UEFI 指针或未经验证的 MMIO。
-- 补齐板级交接后才可调用 `chiron_native_bind`；随后线程才能执行发现、持续检查和 20 ms 轮询。目前此路径不会启动。20 ms 是处理后的等待时间，不承诺实际采样率 50 Hz。
+- 仅可在 `CHIRON_PORT` 构建中编译，正常驱动默认关闭，`chiron_touch=1` 才请求启用。
+- `chiron_native_transport()` 现在执行真实 board probe，成功后构造 MMIO/barrier/单调时钟/调度等待回调并调用 `chiron_native_bind`，不再是无条件 stub。写回调只能指向已映射 QUP 窗口；没有写 GCC、GPIO、reset 或 regulator 的接口。
+- 只有满足全部条件的 native bind 才能初始化 QUP，随后线程发现 PDT、验证 F12 并轮询。未知硬件条件拒绝；原有 `chiron_touch=2` 保留为异步只读记录模式，不打开 QUP。
+- 拍照诊断采用新的 `chiron_touch_probe=1`，优先于正常触控开关，在初始化线程中同步检查并 panic，不启动 worker。即使所有条件通过也不调用 native bind。panic 含原始快照与 `obs` 有效位图，未读单元为零占位；完整普通日志只列实际读到的寄存器。平台不符也只记录拒绝并 panic，MMIO 映射数为零。
 - 已检查实际 XNU `osfmk/kern/clock.c:1573` 的延时实现：`delay_for_interval` 经 `_clock_delay_until_deadline_with_leeway`，在可调度上下文会 `assert_wait_deadline` + `thread_block`，在短间隔阈值、禁抢占或关中断时会进入 `machine_delay_until` 自旋。ARM64 `ml_delay_should_spin` 按 CPU idle latency 判断，未知 latency 返回 FALSE。因此原函数并非无条件忙等。为了让触控 worker 的行为明确，20 ms 周期现在使用 `assert_wait_timeout(..., THREAD_UNINT, 20, NSEC_PER_MSEC)`，仅在 `THREAD_WAITING` 时 `thread_block(THREAD_CONTINUE_NULL)`；worker 无持有锁的区间跨越等待，不依赖自旋阈值。
 - 选择此覆盖层后，`touchscreen=1` 不会调用 redwood 的 SPI 驱动。
 
 主机测试用合成的三槽/十槽对象快照、QUP 寄存器模型及可变长度的 DSX 寄存器窗口验证整个链路。这些测试向量**不是实机报文，也不是板级交接证明**。DSX Query/Control 寄存器存在多字节逻辑窗口，测试没有把 Query5/6/7/8 错误摊成互相覆盖的线性数组。
 
-## 精确阻塞项
+## 板级只读检查
 
-实现可用驱动前，剩下的不是缺少控制器或 DSX 源码，而是：
+`drivers/chiron-touch/chiron_board.{h,c}` 首先检查 ADT：`/arm-io/device_type` 必须逐字节为 `chiron\0`；`ranges` 必须为 `{0,0x01000000,0xff000000}`；GIC offsets/size 必须与 chiron 的 `0x17a00000` distributor、`0x17b00000` redistributor 一致；`/chosen/display-rotation` 必须为 0。iOS 的伪装 model/chip-id 不用作板级身份。任何身份、长度或 rotation 不符都在映射 MMIO 前拒绝。
 
-1. **真实 post-EBS 板级交接**：由测量或可审计的原生板级代码确认 QUP5 的映射、GCC iface/core clock 在退出固件后仍以所需速率运行，GPIO87/88 复用正确，固件/DSP 不再使用总线，以及 QUP IRQ 已屏蔽。当前 EDK2 `Close()` 的资源释放语义未证实。若需重开时钟/复用，必须先实现有证据的板级 provider；不能靠 `handoff_ready=1` 或 boot-arg 越过证明。
-2. **供电、reset 与方向**：证明 PM8998 L6/L14、LAB/IBB/显示相关电源和 GPIO89 在固件退出后保持通信状态，并确认坐标朝向。当前没有这些交接后的实测结果，也没有执行 regulator、GPIO89 或显示复位写入。
-3. **运行期支持子集与一致性验收**：通过原生传输读取本机真实 F01/PDT、Query5/6/8、Ctrl8/20/23/28、FIFO 容量和 Data15，确认当前配置确实满足只读验证器。若 F01 未 configured、Ctrl28 不是 `0xff`、Query6 超限、wedge 布局或 FIFO 太小，当前应拒绝；应在取得相应协议证据后单独扩展，不能静默改写控制器或拆帧。实际触摸的按下/移动/抬手、多指、帧一致性、方向与 HID 消费还须实机验收。
+通过身份检查后，按以下次序读取。所有地址、mask 和期待值来自上表固定源码，**寄存器当前值尚未实机测量**。
 
-本任务范围内已收窄到可测试的控制器/协议子集；没有把缺少交接证据伪装成已工作的硬件驱动。
+| 检查 | 物理地址 | mask / 期待值 |
+| --- | --- | --- |
+| BLSP1 reset 未置位 | `0x00117000` | `0x1 / 0` |
+| AP AHB vote 保持 | `0x00152004` | `0x20000 / 0x20000` |
+| AHB branch 未 off | `0x00117004` | `0x80000000 / 0` |
+| QUP5 I2C branch 开启、非 HW gating、未 off | `0x00121008` | `0x80000003 / 1` |
+| Root 未 off/update/dirty | `0x00121020` | `0x800000f1 / 0` |
+| XO source、divide-by-one、MND off | `0x00121024` | `0x371f / 1` |
+| GPIO87/88 复用为 blsp_i2c5 | `0x03d57000`、`0x03d58000` | `0x3c / 0xc` |
+| GPIO89 为 GPIO output | `0x03d59000` | `0x23c / 0x200` |
+| reset output 与实际输入均高 | `0x03d59004` | `0x3 / 3` |
+| QUP IRQ131 已屏蔽 | `0x17a00110` | `0x8 / 0`，SPI99+32=131 |
+| QUP master/valid，非 PAUSE | `0x0c179004` | `0x14 / 0x14`，且 bit1=0 |
+| QUP 无错误/活动总线/master，SDA/SCL 高 | `0x0c179404` | `0x0f8003fc / 0x0c000000` |
+
+GCC 使用运行时 DT 的基址与大小。GPIO 地址按 `TLMM 0x03400000 + EAST 0x900000 + GPIO*0x1000` 计算，没有套用 redwood 的平铺地址。IRQ mask 读取沿用本 XNU GICv3 的 ISENABLER 计算，没有修改中断路由或使能位。
+
+GCC 检查失败时不会访问后面的 TLMM/GIC/QUP；pin/reset 失败时不访问 QUP；mask 失败也不访问 QUP。日志含 `status`、失败寄存器名、实际值和期待 mask/value。映射失败明确记录 `cannot map/read prerequisite`，不会把未读零值说成测量。没有尝试读取未核实的 PMIC regulator 寄存器；panel 是否可工作还由后续 F01/F12 应答确认，而不是宣称测到了供电电压。
+
+所有权未确认时，最多保留上述已核实地址的 GCC/TLMM/GIC 只读快照；这些条件通过后记录 `CB_OWNERSHIP`，在访问任何 QUP 寄存器（包括 STATE/STATUS）前拒绝。不能把此前的 GCC 快照当作固件 CPU 不会随后关闭 QUP 时钟的保证；QUP 的 observed 位保持未读，且没有寄存器写入。
+
+每次事务前重新检查 GCC/pin/reset/GIC 保持条件。此时不要求我们自己正在使用的 QUP idle；传输状态由 QUP 核心检查。条件丢失后停止，不再为了清理而向时钟已关闭的 QUP 写 RESET。
+
+## 所有权假设与边界
+
+**纠正此前 post-EBS 表述**：固定 HackiOS `xnuloader/loader.c` 的 `loader_save_ctx` / `jump_to_kernel` 路径和 XNU `loader_return.c` 明确保留 Boot Services，未调用 ExitBootServices。EDK2 Synaptics 的 EBS Close 回调不能当作已经执行。
+
+`loader_overlay(repo)` 现在加入可执行检查，而不是凭一个用户 flag 宣称拥有总线：
+
+- 只有 chiron、SMC、实际 boot affinity=0、kernel affinity 与 boot 相同的 direct-entry 路径才可能放行。
+- PSCI 版本必须为 0.2 或 1.x；逐个读取实测七个其它 MPIDR `{1,2,3,0x100,0x101,0x102,0x103}`，每个必须明确返回 OFF。未知、ON、ON_PENDING、NOT_SUPPORTED 都不给所有权标志。
+- 在 ADT `/chosen/chiron-touch-handoff` 写入四个 u32：版本、direct-entry 条件、已确认 OFF 的其它 CPU mask、`firmware-resident`。没有启用触控或探针时不进行这些 PSCI 查询。最后跳入内核前再次验证；条件改变则拒绝此次 boot，而不是留一个过期标志。
+- 同核 `jump_to_kernel` 首先屏蔽中断，替换执行环境后由 XNU 接管异常向量；resident firmware 的 boot CPU 被挂起，其余核已 OFF，没有 CPU 执行固件 DSX 20 ms 定时回调。不同 boot CPU 的并行 UEFI 路径不会取得此标志。
+
+**这是源码支持的正常世界固件执行隔离假设，不是硬件总线锁，也不是 EBS 证明。** 普通 OS 驱动同样要假设 secure world、DSP 或其它独立 master 不会并发占用 AP 的 QUP5；本轮没有测量这些不可见的 master。后续若出现反例，必须撤销该假设、补资源所有权交接，不能用 idle 一次读数代替互斥。loader 不调用 CPU_ON/OFF、不停止 DXE、不改变 pinmux/clock/regulator，也不伪造 EBS。
+
+方向使用同一固定驱动中 `of_property_read_bool` 的默认 false，已直接核对 runtime DT 不含 `synaptics,swap-axes/x-flip/y-flip`，并要求 ADT rotation=0；实际触摸方向仍须实机验收。
+
+剩余实机条件是保留时钟/引脚/reset/IRQ 的实际值、可用 FIFO 容量、F01/F12 是否属于所支持子集，以及真实按下/移动/抬手、多指与 HID 消费行为。若时钟关闭、复用不符、F01 未 configured、Ctrl28 不是 `0xff`、Query6 超限、wedge 布局或 FIFO 太小，本版本明确拒绝，不盲目补写硬件。
 
 ## 父任务集成
 
@@ -142,17 +184,22 @@ Python API：
 
 ```python
 import apply_chiron_touch
+loader_report = apply_chiron_touch.loader_overlay(hackios_repo)
 report = apply_chiron_touch.apply(tree=xnu_tree)
 # 等价：kernel_overlay(xnu_tree)
 ```
 
+loader API 已分别验证 base-only 和实际 phone 顺序：base chiron → `apply_chiron_usb.apply` → `apply_chiron_memory.apply` → `loader_overlay`。两种变体都将整个 `loader.c` 编译为 ARM64 Windows COFF 对象，而不只是做语法检查；include 名称和局部变量也不与 SMP overlay 冲突。父任务已有分发可直接调用。它只修改临时树的 `xnuloader/loader.c`，并加入本任务的 `chiron_touch_loader.inc` 与 ABI header，不改原始固定源仓库或共享集成文件。
+
 另一种互斥方式是在 HackiOS 临时源仓库运行 `source_overlay(source_repo)` / `apply(source=source_repo)`，或 CLI 的 `source` 模式，之后再执行上游 `xnu/apply.sh`。**两种方式只能选一种**；不要先源覆盖再内核覆盖。
 
-覆盖层只替换临时树中原 `bsd/dev/redwood_goodix.c`，并放入四个头文件以及 core/qup/f12/native 四个 include，共九个目标文件；源模式对应 `xnu/files/bsd/dev/`。新增核心均以 include 加入已有对象，因此无需改共享 `bsd/conf/files`。不改 loader、输入队列、HID 消费端或 SMP 文件，与 SMP overlay 顺序独立；kernel 模式必须在 base `CHIRON_PORT` overlay 后执行。
+kernel 覆盖层只替换临时树中原 `bsd/dev/redwood_goodix.c`，并放入 dsx/qup/f12/native/board 的头文件和 include、共享 ABI header，共十二个目标文件；源模式对应 `xnu/files/bsd/dev/`。新增核心以 include 加入已有对象，无需改共享 `bsd/conf/files`。不改输入队列、HID 消费端或 SMP 文件；kernel 模式必须在 base `CHIRON_PORT` overlay 后执行。
 
-应用前检查原 `redwood_goodix.c`、`redwood_input.c` 的固定 SHA-256 以及全部覆盖层源哈希。任何上下文变化、已应用或目标 include 冲突都在写入前拒绝。返回报告包含九个目标文件的哈希、manifest 哈希及固定协议源码提交。状态为 `blocked-board-handoff-and-runtime-qualification`，`kernel_rebuild_required=true`、`native_i2c_transport_implemented=true`、`f12_layout_validator_implemented=true`，但 `native_i2c_hardware_enabled=false`、`hardware_touch_available=false`。
+应用前检查原 `redwood_goodix.c`、`redwood_input.c` 的固定 SHA-256、全部覆盖层源哈希，loader 模式检查精确代码上下文、helper/ABI 哈希及新文件冲突。任何上下文变化、已应用或 include 冲突都在发布前拒绝。JSON 提供 `board_probe_implemented=true`、`photo_probe_boot_arg=chiron_touch_probe=1`、`native_i2c_can_enable_conditionally=true`，状态为 `experimental-retained-handoff-runtime-unqualified`。构建时 `native_i2c_hardware_enabled=false` 表示未执行硬件，不代表运行期永远拒绝；`hardware_touch_available=false` / `hardware_observed=false` 保留未上机验证的边界。
 
-**必须重建内核，不能复用此前的单核内核缓存来声称触控代码已入包。** `chiron_touch=1` 目前只能验证日志中的拒绝路径。无需加 `touchscreen=1`。保持此实验默认关闭，保留报告的阻塞状态。
+**必须重建 loader 与内核。** 不传触控参数时默认关闭。正常实验用 `chiron_touch=1`；父任务 TOUCH-PROBE 的参数为 `cpus=1 epoch=<unix> -v chiron_touch_probe=1`，没有正常触控参数。已验证 loader selector 接受此完整形式，且 XNU 在读取普通 enable guard 前先解析 probe。若两者都有，probe 仍优先，绝不启动 transport。无需 `touchscreen=1`。
+
+probe 在 `redwood_input_init` 的触控初始化位置同步执行，因此 GUI 尚未启动；panic 文本包括原始 GCC/GPIO/GIC/QUP 快照和有效位图。panic 沿用此固定 XNU 的现有处理，可能经 `loader_return` 返回 resident loader，而不是永久停住或退出固件；显示保留时长、日志实际是否可拍仍需该诊断镜像的实机反馈。本任务没有修改全局 panic/loader-return 策略。
 
 ## 验证
 
@@ -161,7 +208,7 @@ python3 -m unittest discover -s tests -p test_chiron_touch.py -v
 clang -target arm64-apple-darwin -std=c11 -ffreestanding \
   -Wall -Wextra -Werror -fsyntax-only drivers/chiron-touch/chiron_dsx.c \
   drivers/chiron-touch/chiron_qup.c drivers/chiron-touch/chiron_f12.c \
-  drivers/chiron-touch/chiron_native.c
+  drivers/chiron-touch/chiron_native.c drivers/chiron-touch/chiron_board.c
 ```
 
 本机测试覆盖：
@@ -170,7 +217,9 @@ clang -target arm64-apple-darwin -std=c11 -ffreestanding \
 - 实际 C 核心以 `-Wall -Wextra -Werror -fsanitize=address,undefined` 编译执行；PDT 扫描、未知布局、短读、页选择失败、版本/描述符拒绝、未知对象及长度、全帧原子发布、多指移动与释放、所有槽位、闭区间坐标、布局变化及失败后的释放和停止。
 - 原生寄存器模型验证 tag 字节流、计数、pack/unpack、状态顺序、barrier、16/80 字节读取、32/128 字节 FIFO 容量和拒绝缺少交接或单调时钟回调时任何 MMIO；测试 NACK/仲裁/bus/failed/tag/FIFO/超时/短 FIFO 错误不会交付部分数据或自动重试。额外模拟单次等待超时、时钟停滞和时钟倒退，验证截止检查和迭代兜底都能停止。
 - 实际 F12 验证器测试制造商/build、F01 状态、Query5/6/8 长度和 presence/subpacket 边界、Ctrl23 数量/映射、Ctrl28 字段、continuous mode、Data0/Data15 与范围；在寄存器模型中执行 native→PDT→F12→Data1→既有事件回调，验证 Data15 对残留对象的释放、前后位图不一致和读帧期间复位的拒绝。
-- XNU 适配器在主机类型/函数替身下严格编译并执行，验证新增传输/验证器确实包含在对象中，但默认关闭与显式选择均不启动缺少交接提供者的传输、不发事件；直接执行实际 sleep helper，检查其 20 ms 不可中断等待参数、`THREAD_WAITING` 时阻塞，以及已经超时时不再调用 `thread_block`。
+- 板级模型检查严格身份、每个源码 mask 的失败、映射失败、缺少/改变所有权标志、QUP 非 idle/master，以及不同 IRQ 位不影响结果；检查失败时不写任何 MMIO。模型执行真实 probe→native bind→F12→事件路径，检查运行中丢失时钟不再发 QUP 清理写。
+- XNU 适配器在主机类型/函数替身下严格编译执行：错误平台在映射前拒绝，默认关闭不启动；直接执行 sleep helper 检查等待语义。probe 模式在错误身份与全部条件满足两种情况下均进入可捕获 panic，无 worker/事件；对所有映射的 GCC/GPIO/GIC/QUP 内存逐字节快照比较，包括非零 QUP_SW_RESET 哨兵，确认没有写寄存器。
+- 实际 loader helper 的主机测试覆盖默认关闭、精确 probe argv、正常选择、重复参数、错误 boot CPU（含 Aff3）、PSCI 版本以及每个其它 CPU 的错误状态；仿真只允许 VERSION/AFFINITY_INFO 查询，任何 CPU_ON/OFF 都失败。base-only 和 USB+memory 的完整 AArch64 UEFI freestanding 编译均通过，并核验对象 machine=`0xaa64`。有 `lld-link`（或 `CHIRON_TOUCH_LLD_LINK`）时测试继续链接并校验 EFI PE machine；本机没有该链接器，未在本机声称完成 EFI 链接，由父任务 CI/打包完成。
 - 私有原始采集可读时，按 manifest 校验 SHA-256，并直接解析原 runtime DT 的 I2C 基址与 GPIO，而非只匹配文档字符串。
 - ARM64 Darwin freestanding 语法检查通过。
 

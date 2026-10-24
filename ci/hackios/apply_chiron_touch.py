@@ -21,6 +21,9 @@ COPIES = {
     "chiron_touch_f12.inc": "chiron_f12.c",
     "chiron_native.h": "chiron_native.h",
     "chiron_touch_native.inc": "chiron_native.c",
+    "chiron_board.h": "chiron_board.h",
+    "chiron_touch_board.inc": "chiron_board.c",
+    "chiron_touch_abi.h": "chiron_touch_abi.h",
 }
 
 
@@ -53,14 +56,21 @@ def _overlay(root, prefix, manifest):
     return {
         "schema": "chiron-touch-overlay-v1",
         "kind": "source" if str(prefix).startswith("xnu/") else "kernel",
-        "status": "blocked-board-handoff-and-runtime-qualification",
+        "status": "experimental-retained-handoff-runtime-unqualified",
         "boot_arg": "chiron_touch=1",
+        "read_only_probe_boot_arg": "chiron_touch_probe=1",
+        "legacy_async_read_only_boot_arg": "chiron_touch=2",
+        "photo_probe_boot_arg": "chiron_touch_probe=1",
         "kernel_rebuild_required": True,
         "hardware_observed": False,
         "hardware_touch_available": False,
         "native_i2c_transport_implemented": True,
         "f12_layout_validator_implemented": True,
         "native_i2c_hardware_enabled": False,
+        "board_probe_implemented": True,
+        "loader_overlay_required_for_native": True,
+        "native_i2c_can_enable_conditionally": True,
+        "runtime_enable_policy": "retained-registers-and-direct-bootcpu-handoff",
         "source_commit": manifest["hackios_commit"],
         "protocol_source_commit": manifest["native_upstream"]["commit"],
         "replaced_source_sha256": before,
@@ -91,14 +101,76 @@ def source_overlay(source):
     return apply(source=source)
 
 
+def loader_overlay(source):
+    """Add identity-scoped ownership metadata; no EBS or hardware reconfiguration."""
+    source = Path(source)
+    path = source / "xnuloader/loader.c"
+    text = path.read_text()
+    if 'static const struct platform platform_chiron = {' not in text:
+        raise ValueError("apply the base chiron loader overlay first")
+    if "chiron_touch_loader.inc" in text:
+        raise ValueError("touch loader overlay already applied")
+
+    def replace(old, new):
+        nonlocal text
+        if text.count(old) != 1:
+            raise ValueError(f"touch loader context changed: {old[:80]}")
+        text = text.replace(old, new, 1)
+
+    replace("static int64_t\nrun_on_other_cpu(",
+            '#include "chiron_touch_loader.inc"\n\nstatic int64_t\nrun_on_other_cpu(')
+    replace("\tuint64_t cntfrq = READ_SYSREG(CNTFRQ_EL0);",
+            "\tuint64_t cntfrq = READ_SYSREG(CNTFRQ_EL0);\n"
+            "\tuint32_t chiron_touch_handoff[4] = {CHIRON_TOUCH_HANDOFF_VERSION, 0, 0,\n"
+            "\t    CHIRON_TOUCH_FIRMWARE_RESIDENT};\n"
+            "\tif (plat == &platform_chiron) {\n"
+            "\t\tchiron_touch_handoff[1] = chiron_touch_loader_owner(ba->commandLine,\n"
+            "\t\t    READ_SYSREG(MPIDR_EL1) & 0xff00ffffffULL, kernel_mpidr);\n"
+            "\t\tif (chiron_touch_handoff[1]) chiron_touch_handoff[2] = CHIRON_TOUCH_OTHER_CPUS_OFF;\n"
+            "\t}\n")
+    replace('\tdt_begin(&w, "chosen");',
+            '\tdt_begin(&w, "chosen");\n'
+            '\tif (plat == &platform_chiron)\n'
+            '\t\tdt_prop(&w, "chiron-touch-handoff", chiron_touch_handoff, sizeof(chiron_touch_handoff));')
+    replace("\t\t\tjump_to_kernel(entry_va + slide, ba_pa);",
+            "\t\t\tif (plat == &platform_chiron && chiron_touch_handoff[1] &&\n"
+            "\t\t\t    chiron_touch_loader_owner(ba->commandLine,\n"
+            "\t\t\t        READ_SYSREG(MPIDR_EL1) & 0xff00ffffffULL, kernel_mpidr) !=\n"
+            "\t\t\t    CHIRON_TOUCH_DIRECT_BOOT_CPU) {\n"
+            '\t\t\t\tprint("chiron touch: CPU ownership changed before direct handoff; refusing boot\\n");\n'
+            "\t\t\t\treturn 0;\n\t\t\t}\n"
+            "\t\t\tjump_to_kernel(entry_va + slide, ba_pa);")
+    manifest = json.loads(MANIFEST.read_text())
+    helper = (HERE / "chiron_touch_loader.inc").read_bytes()
+    abi = (DRIVER / "chiron_touch_abi.h").read_bytes()
+    if digest(helper) != manifest["loader_files"]["chiron_touch_loader.inc"] or \
+            digest(abi) != manifest["overlay_files"]["chiron_touch_abi.h"]:
+        raise ValueError("touch loader manifest mismatch")
+    edits = {"xnuloader/loader.c": text.encode(),
+             "xnuloader/chiron_touch_loader.inc": helper,
+             "xnuloader/chiron_touch_abi.h": abi}
+    for relative in edits:
+        target = source / relative
+        if target.is_symlink() or (target.exists() and target != path):
+            raise ValueError(f"refusing existing touch loader destination: {target}")
+    for relative, data in edits.items():
+        (source / relative).write_bytes(data)
+    return {"schema": "chiron-touch-overlay-v1", "kind": "loader",
+            "board_probe_implemented": True, "photo_probe_boot_arg": "chiron_touch_probe=1",
+            "firmware_mode": "resident-not-exited",
+            "ownership_assumption": "same-boot-cpu-direct-entry-and-seven-other-affinities-OFF",
+            "hardware_observed": False, "runtime_qualified": False,
+            "result": {name: digest(data) for name, data in edits.items()}}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("kind", choices=("source", "kernel"), nargs="?", default="kernel")
+    parser.add_argument("kind", choices=("source", "kernel", "loader"), nargs="?", default="kernel")
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--report", type=Path)
     args = parser.parse_args()
-    result = (source_overlay(args.source) if args.kind == "source"
-              else kernel_overlay(args.source))
+    result = {"source": source_overlay, "kernel": kernel_overlay,
+              "loader": loader_overlay}[args.kind](args.source)
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)
         args.report.write_text(json.dumps(result, indent=2) + "\n")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build explicitly unqualified SMP phone inputs from a verified source build."""
+"""Build explicitly unqualified phone inputs from a verified driver source build."""
 
 import argparse
 import hashlib
@@ -51,10 +51,13 @@ def payload_entries(data):
     raise ValueError("missing XNUP terminator")
 
 
-def check_kernel(data):
+def check_kernel(data, variant="smp2"):
     if len(data) < 32 or struct.unpack_from("<III", data) != (0xFEEDFACF, 0x100000C, 0):
         raise ValueError("experimental kernel is not plain ARM64 Mach-O")
-    if ABI not in data:
+    if variant == "touch":
+        if b"chiron touch:" not in data:
+            raise ValueError("experimental kernel lacks the touch implementation")
+    elif ABI not in data:
         raise ValueError("experimental kernel lacks the SMP ABI")
 
 
@@ -68,7 +71,7 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
     if proof.get("schema") != SCHEMA or inputs.get("driver_experiment") != proof:
         raise ValueError("experimental proof differs from phone inputs")
     chosen = selection(proof.get("variant", ""))
-    if chosen["variant"] not in ("smp2", "smp8") or proof.get("cpu_count") != chosen["cpu_count"]:
+    if chosen["variant"] not in ("smp2", "smp8", "touch") or proof.get("cpu_count") != chosen["cpu_count"]:
         raise ValueError("unsupported phone experiment")
     source = proof["source_build"]
     if (source.get("schema") != "chiron-driver-build-v1" or source.get("variant") != chosen["variant"]
@@ -80,6 +83,11 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
                 raise ValueError("source experiment must retain unqualified status")
     if source.get("kernel_reused") is not False:
         raise ValueError("the experimental source kernel was reused")
+    if chosen["touch"]:
+        touch = source.get("overlays", {}).get("kernel", {}).get("changes", {}).get("touch", {})
+        if (source.get("touch") is not True or touch.get("board_probe_implemented") is not True
+                or proof.get("probe_only") is not True):
+            raise ValueError("touch image requires the read-only board probe")
     if inputs["profile"]["cpu_count"] != chosen["cpu_count"]:
         raise ValueError("phone CPU profile differs")
     if proof["loader_overlay"]["cpu_limit"] != chosen["cpu_count"]:
@@ -88,7 +96,7 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
     kernel = content_digest(entries["kernel"])
     if kernel != source["artifacts"]["kernel.development.hackios"] or kernel != proof["kernel"]:
         raise ValueError("payload kernel differs from the fresh source build")
-    check_kernel(entries["kernel"])
+    check_kernel(entries["kernel"], chosen["variant"])
     root = content_digest(entries["ramdisk"])
     if any(root[key] != inputs["small_root"][key] for key in root):
         raise ValueError("payload small root differs")
@@ -96,8 +104,11 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
     if any(packed[key] != inputs["payload"][key] for key in packed):
         raise ValueError("experimental payload digest differs")
     command = entries["cmdline"]
+    pattern = rb"cpus=" + str(chosen["cpu_count"]).encode() + rb" epoch=[0-9]+"
+    if chosen["touch"]:
+        pattern += rb" -v chiron_touch_probe=1"
     if (not command.endswith(b"\0") or b"\0" in command[:-1]
-            or not re.fullmatch(rb"cpus=" + str(chosen["cpu_count"]).encode() + rb" epoch=[0-9]+\0", command)
+            or not re.fullmatch(pattern + rb"\0", command)
             or command[:-1].decode("ascii") != proof["command_line"]
             or entries["usb"] != b"1\0"):
         raise ValueError("experimental CPU arguments or USB mode differ")
@@ -110,7 +121,8 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
 def verify_source(folder, variant, source_run):
     proof = json.loads((folder / "driver-build.json").read_text())
     chosen = selection(variant)
-    if variant not in ("smp2", "smp8") or proof.get("variant") != variant:
+    if (proof.get("schema") != "chiron-driver-build-v1"
+            or variant not in ("smp2", "smp8", "touch") or proof.get("variant") != variant):
         raise ValueError("wrong source artifact variant")
     if proof.get("source_build_run") != source_run or proof.get("cpu_count") != chosen["cpu_count"]:
         raise ValueError("wrong source build run or CPU count")
@@ -118,6 +130,13 @@ def verify_source(folder, variant, source_run):
         raise ValueError("missing source commit")
     if proof.get("kernel_reused") is not False:
         raise ValueError("source artifact reused an old kernel")
+    if any(proof.get(key) is not False for key in
+           ("runtime_qualified", "hardware_observed", "phone_boot_ready")):
+        raise ValueError("source build has an unexpected qualification state")
+    if set(proof["artifacts"]) != {
+        "kernel.development.hackios", "kernel.development.hackios.unstripped", "loader.efi"
+    }:
+        raise ValueError("incomplete source artifact manifest")
     for name, expected in proof["artifacts"].items():
         if name not in ("kernel.development.hackios", "kernel.development.hackios.unstripped", "loader.efi"):
             raise ValueError("unexpected source artifact path")
@@ -125,7 +144,11 @@ def verify_source(folder, variant, source_run):
             raise ValueError("source artifact digest differs: " + name)
     if (folder / "kernel-undefined.txt").read_text().strip():
         raise ValueError("source kernel has unresolved symbols")
-    check_kernel((folder / "kernel.development.hackios").read_bytes())
+    check_kernel((folder / "kernel.development.hackios").read_bytes(), variant)
+    if chosen["touch"]:
+        report = proof.get("overlays", {}).get("kernel", {}).get("changes", {}).get("touch", {})
+        if report.get("board_probe_implemented") is not True:
+            raise ValueError("touch source build has no board probe")
     return proof
 
 
@@ -136,7 +159,7 @@ def main():
     parser.add_argument("--runtime", type=Path, required=True)
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--variant", choices=("smp2", "smp8"), required=True)
+    parser.add_argument("--variant", choices=("smp2", "smp8", "touch"), required=True)
     args = parser.parse_args()
     import apply_chiron_smp
     import cloud
@@ -152,10 +175,16 @@ def main():
     shutil.copytree(base, args.output)
     cloud.command([sys.executable, HERE / "phone_loader.py", "--work", args.work,
                    "--phone", args.output])
-    overlay = apply_chiron_smp.loader_overlay(args.work, chosen["cpu_count"])
+    if chosen["touch"]:
+        import apply_chiron_touch
+        overlay = {"cpu_limit": 1, "touch": apply_chiron_touch.loader_overlay(args.work)}
+    else:
+        overlay = apply_chiron_smp.loader_overlay(args.work, chosen["cpu_count"])
     cloud.command(["bash", "xnuloader/build.sh"], cwd=args.work)
     shutil.copy2(args.work / "xnuloader/loader.efi", args.output / "loader.efi")
     command_line = f"{apply_chiron_smp.command_line(chosen['cpu_count'])} epoch={int(time.time())}"
+    if chosen["touch"]:
+        command_line += " -v chiron_touch_probe=1"
     kernel = args.source_build / "kernel.development.hackios"
     cloud.command([sys.executable, args.work / "xnuloader/mkpayload.py", "--usb",
                    "-o", args.output / "payload.bin", f"kernel={kernel}",
@@ -170,6 +199,7 @@ def main():
         "schema": SCHEMA, "variant": args.variant, "cpu_count": chosen["cpu_count"],
         "source_build": source, "kernel": digest(kernel), "loader_overlay": overlay,
         "command_line": command_line, "packaging_project_sha": os.environ["GITHUB_SHA"],
+        "probe_only": chosen["touch"],
         "runtime_qualified": False, "hardware_observed": False, "phone_boot_ready": False,
     }
     inputs["driver_experiment"] = experiment

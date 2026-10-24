@@ -1,6 +1,6 @@
 /*
  * Bounded DSX groundwork. No MMIO, reset, regulator or firmware operations.
- * Layout validation and a post-EBS native I2C implementation are prerequisites.
+ * Layout validation and a checked native-I2C handoff are prerequisites.
  */
 #ifndef CHIRON_DSX_H
 #define CHIRON_DSX_H

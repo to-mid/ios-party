@@ -50,6 +50,24 @@ def fixture(count=2, command=None):
     return proof, inputs, payload
 
 
+def touch_fixture(command="cpus=1 epoch=1792760000 -v chiron_touch_probe=1"):
+    proof, inputs, payload = fixture()
+    entries = phone.payload_entries(payload)
+    entries["kernel"] += b"chiron touch: board probe"
+    entries["cmdline"] = command.encode() + b"\0"
+    payload = pack(list(entries.items()))
+    kernel = phone.content_digest(entries["kernel"])
+    source = proof["source_build"]
+    source.update(variant="touch", cpu_count=1, touch=True,
+                  overlays={"kernel": {"changes": {"touch": {"board_probe_implemented": True}}}})
+    source["artifacts"]["kernel.development.hackios"] = kernel
+    proof.update(variant="touch", cpu_count=1, probe_only=True, kernel=kernel, command_line=command)
+    proof["loader_overlay"]["cpu_limit"] = 1
+    inputs["profile"]["cpu_count"] = 1
+    inputs["payload"] = phone.content_digest(payload)
+    return proof, inputs, payload
+
+
 class ExperimentAdmissionTests(unittest.TestCase):
     def test_both_source_experiments_bind_actual_kernel_root_and_cpu_arguments(self):
         for count in (2, 8):
@@ -118,6 +136,9 @@ class ExperimentAdmissionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="chiron-driver-proof-") as temporary:
             folder = Path(temporary)
             (folder / "kernel.development.hackios").write_bytes(kernel)
+            for name, data in (("kernel.development.hackios.unstripped", kernel), ("loader.efi", b"MZfixture")):
+                (folder / name).write_bytes(data)
+                proof["source_build"]["artifacts"][name] = phone.content_digest(data)
             (folder / "kernel-undefined.txt").write_text("")
             (folder / "driver-build.json").write_text(json.dumps(proof["source_build"]))
             phone.verify_source(folder, "smp2", "123")
@@ -135,6 +156,27 @@ class ExperimentAdmissionTests(unittest.TestCase):
         changed["command_line"] += " debug=1"
         with self.assertRaisesRegex(ValueError, "proof differs"):
             phone.admit_qualification(changed, inputs, payload, True)
+
+    def test_touch_probe_requires_explicit_board_support_and_read_only_mode(self):
+        proof, inputs, payload = touch_fixture()
+        result = phone.admit_qualification(proof, inputs, payload, True)
+        self.assertEqual(result["variant"], "touch")
+        self.assertEqual(result["cpu_count"], 1)
+        altered = copy.deepcopy(proof)
+        altered["source_build"]["overlays"]["kernel"]["changes"]["touch"]["board_probe_implemented"] = False
+        changed_inputs = dict(inputs, driver_experiment=altered)
+        with self.assertRaisesRegex(ValueError, "board probe"):
+            phone.admit_qualification(altered, changed_inputs, payload, True)
+        proof["probe_only"] = False
+        with self.assertRaisesRegex(ValueError, "board probe"):
+            phone.admit_qualification(proof, inputs, payload, True)
+
+    def test_touch_probe_cannot_silently_start_active_transport(self):
+        for command in ("cpus=1 epoch=1 chiron_touch=1",
+                        "cpus=1 epoch=1 chiron_touch_probe=1 chiron_touch=1"):
+            proof, inputs, payload = touch_fixture(command)
+            with self.subTest(command=command), self.assertRaisesRegex(ValueError, "arguments"):
+                phone.admit_qualification(proof, inputs, payload, True)
 
 
 if __name__ == "__main__":

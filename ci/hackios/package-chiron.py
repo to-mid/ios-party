@@ -172,7 +172,7 @@ action = "exit"
         }
         if source_experiment:
             manifest.update(source_experiment=True, runtime_qualified=False, experiment=experiment,
-                            next_action="User may temporarily boot this unqualified source experiment; physical CPU behavior is unverified.")
+                            next_action="User may temporarily boot this unqualified source experiment; physical behavior is unverified.")
         (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
         return image
 

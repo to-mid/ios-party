@@ -31,7 +31,9 @@ struct chiron_qup_io {
     /*
      * Platform prerequisite, not a boot argument: exclusive bus ownership,
      * QUP IRQ masked, live iface clock and 19.2 MHz QUP input clock, GPIO87/88 mux, panel
-     * rails/reset retained after EBS, and the correct MMIO mapping established.
+     * rails/reset retained at handoff, and the correct MMIO mapping established.
+     * The chiron provider documents resident-UEFI boot-CPU suspension rather
+     * than claiming ExitBootServices, which this loader does not execute.
      * Must remain true throughout a transaction. Missing/false => no MMIO.
      */
     int (*handoff_ready)(void *);
