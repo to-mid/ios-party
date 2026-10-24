@@ -223,4 +223,44 @@ clang -target arm64-apple-darwin -std=c11 -ffreestanding \
 - 私有原始采集可读时，按 manifest 校验 SHA-256，并直接解析原 runtime DT 的 I2C 基址与 GPIO，而非只匹配文档字符串。
 - ARM64 Darwin freestanding 语法检查通过。
 
-没有完整 XNU 内核构建：本地树没有 `BUILD/` 生成头与匹配的 XNU SDK。主机适配器编译和独立核心的 ARM64 语法检查不等同完整内核链接；最终真实构建由父任务执行。
+本地树没有 `BUILD/` 生成头与匹配的 XNU SDK，本地测试没有完整编译 XNU。
+主机适配器编译和独立核心的 ARM64 语法检查不等同完整内核链接；云端结果另记如下。
+
+## 云端构建与探针交付
+
+原生 FIFO/F12 协议阶段运行 `40051773333` 已完成内核与 EFI 链接，
+本地核对三个实际产物哈希、ARM64 格式、空未定义符号表与原生协议符号；
+该历史版本尚无板级 provider，记录在
+`dist/chiron-touch-source-40051773333/local-verification.json`。
+
+当前板级版本源码提交为 `83e31f55553d02fe3df5fa0b846d4eeaba4eaac7`，
+运行 `40056688514` 完成全新内核和 loader 链接。所有权未确认时，在读取
+QUP_STATE/STATUS 之前拒绝访问，仍可报告已安全读取的 GCC/TLMM/GIC 状态。
+本地复核确认原生协议与 `chiron_board_probe/identity/retained` 符号均保留，
+内核含实际只读 panic 路径；源码构建产物的三个 SHA-256 与清单匹配。
+记录为 `dist/chiron-touch-source-40056688514/local-verification.json`。
+
+上游 make 退出码仍为 2，沿用工程已有的新链接内核和空未定义符号表门槛；
+不能宣称全部上游导出检查通过。没有授予 DriverKit/kext 全面兼容性、
+触摸可用性或实机运行资格。
+
+运行 `40057611818` 已生成单核的独立 `TOUCH-PROBE` 临时镜像。新手机 loader
+按 base→USB→memory→touch 顺序重新编译，传入实际 handoff 属性；payload
+严格绑定该新内核，命令行为 `cpus=1 epoch=... -v chiron_touch_probe=1`。
+`-v` 在固定 loader 中选择文本 framebuffer；没有 `chiron_touch=1`。
+打包必须显式使用源码实验入口，并校验 `board_probe_implemented=true` 和
+`probe_only=true`，不继承 HK6c 的桌面反馈。
+
+交付目录为 `dist/chiron-driver-candidates/TOUCH-PROBE-40057611818/`，
+包含镜像、manifest、系统卷上传工具和 `START.zh-CN.md`。
+
+| 对象 | SHA-256 |
+| --- | --- |
+| 26,697,728 字节镜像 | `ed299c08b53d8c39e97130f7a6cae7d36472ecc0a38795efae2c5e3dc7d719e5` |
+| 实际内嵌 XNU | `991af46b180c58074d67cb17f7533581877353056558c087327a7ffdbab99920` |
+
+`dist/chiron-touch-probe-40057611818/local-verification.json` 已独立核对镜像
+SHA-256、legacy Android SHA-1、FAT 内文件、实际 XNUP 内核/根卷/探针参数、
+实验菜单，以及与 HK6c 相同的 UEFI body、附加 DTB 和 USB 入口。
+此探针预期在 GUI 前触发诊断 panic，可能返回 resident loader；
+照片或返回后的 `oem log` / `get_staged` 日志是下一步接管硬件所需的实际证据。
