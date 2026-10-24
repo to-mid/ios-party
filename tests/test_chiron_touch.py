@@ -435,7 +435,7 @@ class LoaderHandoffTests(unittest.TestCase):
                            check=True, capture_output=True, text=True)
             subprocess.run([str(program)], check=True)
 
-    def exercise_loader(self, phone, reset=False):
+    def exercise_loader(self, phone, reset=False, l6=False):
         if not (PINNED / "xnuloader/loader.c").exists():
             self.skipTest("fixed loader source unavailable")
         base_spec = importlib.util.spec_from_file_location("touch_base", OVERLAY / "apply_chiron.py")
@@ -456,7 +456,7 @@ class LoaderHandoffTests(unittest.TestCase):
             if phone:
                 modules["apply_chiron_usb"].apply(source)
                 modules["apply_chiron_memory"].apply(source)
-            report = touch.loader_overlay(source, reset_prepare=reset)
+            report = touch.loader_overlay(source, reset_prepare=reset, l6_prepare=l6)
             self.assertEqual(report["firmware_mode"], "resident-not-exited")
             self.assertEqual(len(report["result"]), 4 if reset else 3)
             with self.assertRaisesRegex(ValueError, "already applied"):
@@ -493,6 +493,9 @@ class LoaderHandoffTests(unittest.TestCase):
 
     def test_reset_loader_composes_and_compiles_for_arm64(self):
         self.exercise_loader(phone=True, reset=True)
+
+    def test_l6_loader_composes_and_compiles_for_arm64(self):
+        self.exercise_loader(phone=True, reset=True, l6=True)
 
 
 class MeasuredEvidenceTests(unittest.TestCase):

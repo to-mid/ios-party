@@ -46,8 +46,11 @@ static struct {
 static int owner = 1, reads, writes, stalls, queries, bad_rail = -1;
 static int bad_status, short_delay, stall_error, lose_owner, lose_power, stuck;
 static int locate_error, change_gpio;
+static int l6_build, voltage_writes, set_error, set_ignored, after_set_owner_loss, revert;
+static uint32_t l6_uv = 1808000;
+#define CHIRON_TOUCH_L6_PREPARE l6_build
 static uint32_t gpio50_cfg = 0x203, gpio50_io = 3, cfg = 0x203, io;
-static uint64_t ticks, model_frequency = 19200000, delays[2];
+static uint64_t ticks, model_frequency = 19200000, delays[4];
 #define CNTFRQ_EL0 0
 #define CNTVCT_EL0 1
 #define READ_SYSREG(reg) ((reg) == CNTFRQ_EL0 ? model_frequency : ticks)
@@ -66,14 +69,14 @@ static uint32_t model_read(uint64_t address) {
 }
 static void model_write(uint64_t address, uint32_t value) {
     assert(address == 0x03d59004 && value == 2);
-    assert(stalls == 1 && delays[0] == 5000 && owner == 1);
+    assert(stalls == (voltage_writes ? 2 : 1) && delays[0] == 5000 && owner == 1);
     writes++; io = stuck ? 2 : 3;
 }
 #include "reset.inc"
 static struct chiron_reset_vreg vreg;
 static efi_status get_level(uint32_t device, uint32_t id, uint32_t *uv) {
     assert(device == 0 && (id == 5 || id == 13));
-    *uv = id == 5 ? 1808000 : 1880000;
+    *uv = id == 5 ? l6_uv : 1880000;
     if ((int)id == bad_rail) *uv = 0;
     return 0;
 }
@@ -90,18 +93,29 @@ static efi_status locate(const efi_guid *guid, void *registration, void **result
     return locate_error ? UINT64_C(0x800000000000000e) : 0;
 }
 static efi_status stall(uint64_t us) {
-    assert(stalls < 2);
+    assert(stalls < 4);
     delays[stalls++] = us;
     if (!short_delay) ticks += us * model_frequency / 1000000;
     if (lose_owner) owner = 0;
     if (change_gpio) cfg ^= 0x40;
+    if (voltage_writes && after_set_owner_loss) owner = 0;
+    if (voltage_writes && revert) l6_uv = 1848000;
     return stall_error ? UINT64_C(0x8000000000000007) : 0;
+}
+static efi_status set_level_uv(uint32_t device, uint32_t id, uint32_t uv) {
+    assert(device == 0 && id == 5 && uv == 1800000);
+    assert(l6_uv == 1848000 && io == 0 && cfg == 0x203 && owner == 1);
+    assert(gpio50_io == 3 && !stalls && !voltage_writes);
+    voltage_writes++;
+    if (!set_ignored) l6_uv = uv;
+    return set_error ? UINT64_C(0x8000000000000007) : 0;
 }
 int main(int argc, char **argv) {
     assert(argc == 2);
     int test = atoi(argv[1]), expected = 0;
     services.stall = stall; services.locate_protocol = locate;
     vreg.revision = 0x10005; vreg.get_level = get_level; vreg.get_status = get_status;
+    vreg.set_level_uv = set_level_uv;
     const char *args = "cpus=1 -v chiron_touch_pinmux_probe=1 chiron_touch_reset=1";
     if (test == 0) expected = 1;
     if (test == 1) { io = 3; expected = 1; }
@@ -125,12 +139,38 @@ int main(int argc, char **argv) {
     if (test == 19) args = "chiron_touch_reset=1 chiron_touch_reset=1";
     if (test == 20) args = "chiron_touch_reset=10";
     if (test == 21) model_frequency = 0;
+    if (test >= 22) {
+        args = "cpus=1 -v chiron_touch_pinmux_probe=1 chiron_touch_reset=1 chiron_touch_l6=1";
+        l6_build = 1; l6_uv = 1848000;
+    }
+    if (test == 22) expected = 1;
+    if (test == 23) { l6_uv = 1800000; expected = 1; }
+    if (test == 24) l6_build = 0; /* Old reset image rejects a hidden L6 request. */
+    if (test == 25) args = "chiron_touch_reset=1";
+    if (test == 26) l6_uv = 1808000;
+    if (test == 27) io = 3; /* Never change the rail of a released panel. */
+    if (test == 28) cfg = 0;
+    if (test == 29) { set_error = 1; set_ignored = 1; }
+    if (test == 30) set_ignored = 1;
+    if (test == 31) set_error = 1; /* Failed call may have reached hardware. */
+    if (test == 32) after_set_owner_loss = 1;
+    if (test == 33) bad_rail = 13;
+    if (test == 34) bad_status = 1;
+    if (test == 35) revert = 1;
+    if (test == 36) { l6_uv = 1800000; io = 3; expected = 1; }
+    if (test == 37) args = "chiron_touch_reset=1 chiron_touch_l6=1 chiron_touch_l6=1";
+    if (test == 38) args = "chiron_touch_reset=1 chiron_touch_l6=10";
+    if (test == 39) vreg.set_level_uv = NULL;
+    if (test == 40) l6_uv = 1000000;
+    if (test == 41) l6_uv = 1900000;
     assert(chiron_reset_prepare(args, 0, 0) == expected);
-    assert(writes == (test == 0 || test == 16));
+    assert(writes == (test == 0 || test == 16 || test == 22 || test == 23));
+    assert(voltage_writes == (test == 22 || (test >= 29 && test <= 32) || test == 35));
     if (expected) {
         assert(io == 3 && cfg == 0x203 && delays[stalls - 1] == 200000);
     }
-    if (test == 2 || test >= 18) assert(reads == 0 || test == 21);
+    if (test == 2 || (test >= 18 && test <= 20) || test == 24 || test == 25 ||
+        test == 37 || test == 38) assert(reads == 0);
     if (test == 3 || test == 4) assert(reads == 0 && queries == 0);
     assert(gpio50_cfg == (test == 9 ? 0u : 0x203u));
     assert(gpio50_io == (test == 8 ? 0u : 3u));
@@ -147,7 +187,7 @@ int main(int argc, char **argv) {
             raise AssertionError(result.stderr)
 
     def test_only_reset_output_changes_after_power_and_delays_pass(self):
-        for case in range(22):
+        for case in range(42):
             with self.subTest(case=case):
                 result = subprocess.run([str(self.program), str(case)], text=True, capture_output=True)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

@@ -8,7 +8,7 @@ on:
         type: choice
         required: true
         default: smp
-        options: [smp, touch-probe, touch-clock-probe, touch-pinmux-probe, touch-reset-probe]
+        options: [smp, touch-probe, touch-clock-probe, touch-pinmux-probe, touch-reset-probe, touch-l6-probe]
       touch_source_run:
         description: Successful touch source build run for touch-probe
         type: string
@@ -20,7 +20,7 @@ permissions:
 
 jobs:
   image:
-    name: Experimental ${{ inputs.variant == 'touch-reset-probe' && 'TOUCH-RESET-PROBE' || inputs.variant == 'touch-pinmux-probe' && 'TOUCH-PINMUX-PROBE' || inputs.variant == 'touch-clock-probe' && 'TOUCH-CLOCK-PROBE' || inputs.variant == 'touch-probe' && 'TOUCH-PROBE' || format('SMP{0}', matrix.cpu_count) }}
+    name: Experimental ${{ inputs.variant == 'touch-l6-probe' && 'TOUCH-L6-PROBE' || inputs.variant == 'touch-reset-probe' && 'TOUCH-RESET-PROBE' || inputs.variant == 'touch-pinmux-probe' && 'TOUCH-PINMUX-PROBE' || inputs.variant == 'touch-clock-probe' && 'TOUCH-CLOCK-PROBE' || inputs.variant == 'touch-probe' && 'TOUCH-PROBE' || format('SMP{0}', matrix.cpu_count) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     strategy:
@@ -32,10 +32,11 @@ jobs:
       PYTHONDONTWRITEBYTECODE: '1'
       DRIVER_VARIANT: ${{ startsWith(inputs.variant, 'touch-') && 'touch' || format('smp{0}', matrix.cpu_count) }}
       SOURCE_RUN: ${{ startsWith(inputs.variant, 'touch-') && inputs.touch_source_run || '39964860075' }}
-      IMAGE_LABEL: ${{ inputs.variant == 'touch-reset-probe' && 'TOUCH-RESET-PROBE' || inputs.variant == 'touch-pinmux-probe' && 'TOUCH-PINMUX-PROBE' || inputs.variant == 'touch-clock-probe' && 'TOUCH-CLOCK-PROBE' || inputs.variant == 'touch-probe' && 'TOUCH-PROBE' || format('SMP{0}', matrix.cpu_count) }}
+      IMAGE_LABEL: ${{ inputs.variant == 'touch-l6-probe' && 'TOUCH-L6-PROBE' || inputs.variant == 'touch-reset-probe' && 'TOUCH-RESET-PROBE' || inputs.variant == 'touch-pinmux-probe' && 'TOUCH-PINMUX-PROBE' || inputs.variant == 'touch-clock-probe' && 'TOUCH-CLOCK-PROBE' || inputs.variant == 'touch-probe' && 'TOUCH-PROBE' || format('SMP{0}', matrix.cpu_count) }}
       CLOCK_PREPARE: ${{ inputs.variant == 'touch-clock-probe' && '1' || '0' }}
       PINMUX_PREPARE: ${{ inputs.variant == 'touch-pinmux-probe' && '1' || '0' }}
       RESET_PREPARE: ${{ inputs.variant == 'touch-reset-probe' && '1' || '0' }}
+      L6_PREPARE: ${{ inputs.variant == 'touch-l6-probe' && '1' || '0' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -67,6 +68,7 @@ jobs:
           if [ "$CLOCK_PREPARE" = 1 ]; then EXTRA_ARGS+=(--clock-prepare); fi
           if [ "$PINMUX_PREPARE" = 1 ]; then EXTRA_ARGS+=(--pinmux-prepare); fi
           if [ "$RESET_PREPARE" = 1 ]; then EXTRA_ARGS+=(--reset-prepare); fi
+          if [ "$L6_PREPARE" = 1 ]; then EXTRA_ARGS+=(--l6-prepare); fi
           python3 ci/hackios/driver_phone.py \
             --source-build dist/driver-source --source-run "$SOURCE_RUN" \
             --runtime dist/chiron-runtime --variant "$DRIVER_VARIANT" \

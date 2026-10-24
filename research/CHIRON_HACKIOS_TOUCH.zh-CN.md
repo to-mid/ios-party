@@ -385,5 +385,52 @@ GPIO50 active-high、startup-delay=4000 µs。VREG ABI 固定至既有 Qualcomm
 不反复写入或重新拉低 reset。正常成功后仍由原内核执行 pinmux 和板级探针，
 目标为越过 `bad=9`，不宣称触摸恢复。
 本地 48 项相关检查通过，包括 22 个 reset 情景、ASan/UBSan、实际 loader
-ARM64 编译、旧模式隔离及显式打包证明。云端 loader 链接及镜像交付待完成；
-新功能没有 QEMU 或真机结果。
+ARM64 编译、旧模式隔离及显式打包证明。
+
+云端打包运行 `40076834103` 已完成新 loader 的编译和链接，提交为
+`b53fa441a4a6dc3f36b83d4546589c35976a4d92`。交付文件：
+`dist/chiron-driver-candidates/TOUCH-RESET-PROBE-40076834103/MIX2-EXPERIMENTAL-TOUCH-RESET-PROBE.img`，
+SHA-256 `7ea40c46d0e6812815c2a0b85b07c6982505fa64adeda98209afd2a5c51dfe61`。
+本地核对容器 SHA-256/legacy SHA-1、FAT 读回、ARM64 EFI、新 loader helper
+哈希/参数/打包提交，以及与原源码构建一致的内核；固件/DTB/USB 入口与 HK6c
+相同，容量检查通过。记录为
+`dist/chiron-touch-reset-probe-40076834103/local-verification.json`。
+这轮未重编内核、不继承新功能运行资格；下一步由用户按同目录 `START.zh-CN.md`
+启动，读取供电前检及 reset IO 是否由 0 变为 3。新功能 QEMU/真机仍待验证。
+
+### reset 供电前检实机结果
+
+2026-10-24 USB 日志
+`out/chiron-touch-reset-probe-usb-20261024-round4.log` 共 774 字节，
+SHA-256 `099568bf658ab53b2f686f3052f9ba8eca048f29911ce2294ac903c1e595c2ab`。
+VREG locate 成功，revision=`0x10005`；L6/L14 的 GetLevel/GetStatus 均成功，
+enabled/OK 均为 1。L6 返回 `1848000 µV`，与前检要求的 `1808000 µV` 不同，
+因此明确拒绝。L14=`1880000 µV`、GPIO50 CFG=`0x3c3` / IO=`3` 均满足现有条件。
+这证明固件协议查询已执行；电压值是固件数字读回，不是外部测量，
+不能直接认定电源故障或该电压适合触控。未到 GPIO89 读取/写入，
+reset untouched，内核未启动，本次没有新的内核 UUID、panic 或触摸运行结果。
+下一步核对 L6 读回算法、固件配置与器件允许范围，再决定是否调整判定。
+本次仅取回日志并更新状态，没有新构建或设备启动/上传/重启。
+
+### L6 板级电压修正实验
+
+直接解析上述原始 runtime DT：L6 phandle=`0x1e6`，min/max 均为
+`1800000 µV`；供电引用只有 Synaptics `@20/vdd-supply` 和未绑定的备用
+FocalTech `@38/vddio-supply`。旧前检的 `1808000 µV` 来自参考源码，不能替代
+该手机的实测板级配置。本轮不放宽电压比较，独立 `touch-l6-probe` 改为在
+reset 仍低时，经 VREG `SetLevelUv(0,5,1800000)` 设置 L6，等待至少 5 ms，
+严格读回 `1800000 µV` 且 enabled/OK 后才进入已有 reset 释放流程。
+只接受已观察的 `1848000` 启动值或已经匹配的 `1800000`；后者不写电压。
+其它电源、模式和使能保持原值，未知 profile、reset 已释放、所有权改变、
+写失败/未生效/读回回退均停止，不重试或回写旧电压。
+需要编译期开关和 `chiron_touch_l6=1` 同时存在，旧 reset 模式拒绝这个参数。
+
+固定参考源码和本机厂商 `PmicDxe.efi` 的普通 LLVM 静态核对支持该 API 使用
+微伏及零基 LDO 编号，没有发现包装层的 40mV 加减。原二进制 SHA-256 为
+`16c722765b9862ca28557ef4510c7d8d1a16830e22d8b02f32eb53ad7f3e236c`；
+VREG 相符表 RVA=`0x313d0`，GetLevel=`0x21a8`→LDO `0x9ffc`→
+电压算法 `0xd7e0`，末端为 RangeMin+VSET×VStep。分析副本只去除 debug 目录引用，
+从未用于打包。REA 未连接、CLI 不可用；这些不是 REA Evidence，也不证明
+手机执行了具体静态分支或测到了外部电压。来源文件及原二进制哈希已入清单。
+本地 50 项相关检查通过（含 42 个寄存器情景、ASan/UBSan、ARM64 编译及旧模式
+隔离）。仅需云端重编 loader；原内核和系统输入复用，新功能 QEMU/真机待验证。

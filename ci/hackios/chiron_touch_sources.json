@@ -10,6 +10,11 @@
     "path": "boot_images/QcomPkg/Include/Protocol",
     "files": {
       "EFIPmicVreg.h": "d41e5d8608139959fb779b1eb4aacedef34afea03b318011c6fd501c82ae9bc7"
+    },
+    "voltage_files": {
+      "boot_images/QcomPkg/Drivers/PmicDxe/PmicVregProtocol.c": "18ea4507e1c022d0ec246327612afcfa3d463f76a005c584d914357ebdebac0f",
+      "boot_images/QcomPkg/Library/PmicLib/drivers/ldo/src/pm_ldo.c": "5725aebf8ef4a33c0cc2e926b147169a36b62f99f24fe3de9b45d0e3882e5e0c",
+      "boot_images/QcomPkg/Library/PmicLib/drivers/pwr/src/pm_pwr_alg.c": "51becd876f199eae5a893623af8d7fbe25a1d946ec32e349bcc901839ef512fd"
     }
   },
   "native_upstream": {
@@ -48,9 +53,13 @@
   },
   "loader_files": {
     "chiron_touch_loader.inc": "0ba4c4adc44b0a3715cbb7ef76e94a2f00b526cb96003871dfdb31d625ec2a6f",
-    "chiron_touch_reset.inc": "0e31085aaded7f519edfadebc4e7d300bf4aa8971d07cd3ab24920a9b91e6adf"
+    "chiron_touch_reset.inc": "7858389b5ba6c462b4375a945427d94445c3becc60d152406bfc4a6fca012edd"
   },
   "local_evidence_sha256": {
+    "/private/tmp/chiron-PmicVregProtocol.c": "18ea4507e1c022d0ec246327612afcfa3d463f76a005c584d914357ebdebac0f",
+    "/private/tmp/chiron-pm_ldo.c": "5725aebf8ef4a33c0cc2e926b147169a36b62f99f24fe3de9b45d0e3882e5e0c",
+    "/private/tmp/chiron-pm_pwr_alg.c": "51becd876f199eae5a893623af8d7fbe25a1d946ec32e349bcc901839ef512fd",
+    "/private/tmp/ios-party-research/edk2/Platforms/Msm8998Binaries/common/Binaries/PmicDxe/PmicDxe.efi": "16c722765b9862ca28557ef4510c7d8d1a16830e22d8b02f32eb53ad7f3e236c",
     "research/artifacts/chiron-live-20261020/runtime-tree.tar": "08e76d50d5b513614203521be6f5eeaa40966e1e24a087ea582ee3fe6e9d7718",
     "research/artifacts/chiron-live-20261020/i2c-bindings.txt": "68f0c2bbc61265ec5ff6b559ada3b4d086e213d71a456704de2b877de84c099b",
     "research/artifacts/chiron-live-20261020/input-devices.txt": "a499d01bb67d51c54a0145d234f62992b3c249096da5dddd3d70c053e55b58f1",

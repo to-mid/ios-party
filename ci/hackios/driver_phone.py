@@ -116,6 +116,17 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
                 raise ValueError("reset preparation requires explicit loader write-mode proof")
         elif proof.get("reset_writes", False):
             raise ValueError("probe cannot request undeclared reset writes")
+        if type(proof.get("l6_prepare", False)) is not bool:
+            raise ValueError("L6 preparation mode must be an explicit boolean")
+        if proof.get("l6_prepare", False):
+            loader = proof.get("loader_overlay", {}).get("touch", {})
+            if (proof.get("reset_prepare") is not True or proof.get("power_writes") is not True
+                    or loader.get("l6_prepare_implemented") is not True
+                    or loader.get("power_write_policy") !=
+                    "LDO6-only-1848000-to-1800000-uV-with-reset-low"):
+                raise ValueError("L6 preparation requires explicit power-write proof")
+        elif proof.get("power_writes", False):
+            raise ValueError("probe cannot request undeclared power writes")
     if inputs["profile"]["cpu_count"] != chosen["cpu_count"]:
         raise ValueError("phone CPU profile differs")
     if proof["loader_overlay"]["cpu_limit"] != chosen["cpu_count"]:
@@ -145,6 +156,8 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
                     else rb" -v chiron_touch_probe=1")
         if proof.get("reset_prepare", False):
             pattern += rb" chiron_touch_reset=1"
+        if proof.get("l6_prepare", False):
+            pattern += rb" chiron_touch_l6=1"
     if (not command.endswith(b"\0") or b"\0" in command[:-1]
             or not re.fullmatch(pattern + rb"\0", command)
             or command[:-1].decode("ascii") != proof["command_line"]
@@ -205,11 +218,14 @@ def main():
     parser.add_argument("--clock-prepare", action="store_true")
     parser.add_argument("--pinmux-prepare", action="store_true")
     parser.add_argument("--reset-prepare", action="store_true")
+    parser.add_argument("--l6-prepare", action="store_true")
     args = parser.parse_args()
     import apply_chiron_smp
     import cloud
 
     cloud.require_runner()
+    if args.l6_prepare:
+        args.reset_prepare = True
     if args.reset_prepare:
         args.pinmux_prepare = True
     if args.pinmux_prepare:
@@ -230,7 +246,7 @@ def main():
     if chosen["touch"]:
         import apply_chiron_touch
         overlay = {"cpu_limit": 1, "touch": apply_chiron_touch.loader_overlay(
-            args.work, reset_prepare=args.reset_prepare)}
+            args.work, reset_prepare=args.reset_prepare, l6_prepare=args.l6_prepare)}
     else:
         overlay = apply_chiron_smp.loader_overlay(args.work, chosen["cpu_count"])
     cloud.command(["bash", "xnuloader/build.sh"], cwd=args.work)
@@ -242,6 +258,8 @@ def main():
                          else " -v chiron_touch_probe=1")
         if args.reset_prepare:
             command_line += " chiron_touch_reset=1"
+        if args.l6_prepare:
+            command_line += " chiron_touch_l6=1"
     kernel = args.source_build / "kernel.development.hackios"
     cloud.command([sys.executable, args.work / "xnuloader/mkpayload.py", "--usb",
                    "-o", args.output / "payload.bin", f"kernel={kernel}",
@@ -263,6 +281,8 @@ def main():
         "pinmux_writes": args.pinmux_prepare,
         "reset_prepare": args.reset_prepare,
         "reset_writes": args.reset_prepare,
+        "l6_prepare": args.l6_prepare,
+        "power_writes": args.l6_prepare,
         "read_only": chosen["touch"] and not args.clock_prepare,
         "runtime_qualified": False, "hardware_observed": False, "phone_boot_ready": False,
     }

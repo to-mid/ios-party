@@ -108,9 +108,11 @@ def source_overlay(source):
     return apply(source=source)
 
 
-def loader_overlay(source, reset_prepare=False):
+def loader_overlay(source, reset_prepare=False, l6_prepare=False):
     """Add ownership metadata and, only when selected, the reset preflight."""
     source = Path(source)
+    if l6_prepare and not reset_prepare:
+        raise ValueError("L6 preparation requires the explicit reset experiment")
     path = source / "xnuloader/loader.c"
     text = path.read_text()
     if 'static const struct platform platform_chiron = {' not in text:
@@ -149,7 +151,9 @@ def loader_overlay(source, reset_prepare=False):
             "\t\t\tjump_to_kernel(entry_va + slide, ba_pa);")
     if reset_prepare:
         replace('#include "chiron_touch_loader.inc"',
-                '#include "chiron_touch_loader.inc"\n#include "chiron_touch_reset.inc"')
+                '#include "chiron_touch_loader.inc"\n' +
+                ('#define CHIRON_TOUCH_L6_PREPARE 1\n' if l6_prepare else '') +
+                '#include "chiron_touch_reset.inc"')
         replace("\tuint64_t ranges[3] = { 0, plat->io_base, plat->io_size };",
                 "\tif (chiron_reset_requested(ba->commandLine) &&\n"
                 "\t    !chiron_reset_prepare(ba->commandLine,\n"
@@ -182,7 +186,10 @@ def loader_overlay(source, reset_prepare=False):
             "clock_probe_boot_arg": "chiron_touch_clock_probe=1",
             "reset_prepare_implemented": reset_prepare,
             "reset_probe_boot_arg": "chiron_touch_reset=1" if reset_prepare else None,
-            "reset_power_policy": "read-only-L6-L14-GPIO50-preflight" if reset_prepare else None,
+            "reset_power_policy": ("L6-target-then-L6-L14-GPIO50-preflight" if l6_prepare else
+                                   "read-only-L6-L14-GPIO50-preflight" if reset_prepare else None),
+            "l6_prepare_implemented": l6_prepare,
+            "power_write_policy": "LDO6-only-1848000-to-1800000-uV-with-reset-low" if l6_prepare else None,
             "firmware_mode": "resident-not-exited",
             "ownership_assumption": "same-boot-cpu-direct-entry-and-seven-other-affinities-OFF",
             "hardware_observed": False, "runtime_qualified": False,

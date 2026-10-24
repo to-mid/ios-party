@@ -109,6 +109,35 @@ class ExperimentAdmissionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "reset"):
             phone.admit_qualification(proof, inputs, payload, True)
 
+    def test_l6_probe_requires_explicit_power_write_proof(self):
+        proof, inputs, payload = clock_fixture()
+        entries = phone.payload_entries(payload)
+        entries["kernel"] += b"CHIRON TOUCH PINMUX PROBE"
+        proof["command_line"] = ("cpus=1 epoch=1792760000 -v chiron_touch_pinmux_probe=1"
+                                 " chiron_touch_reset=1 chiron_touch_l6=1")
+        entries["cmdline"] = proof["command_line"].encode() + b"\0"
+        payload = pack(list(entries.items()))
+        kernel = phone.content_digest(entries["kernel"])
+        proof["kernel"] = kernel
+        proof["source_build"]["artifacts"]["kernel.development.hackios"] = kernel
+        proof["source_build"]["overlays"]["kernel"]["changes"]["touch"]["pinmux_prepare_implemented"] = True
+        proof["loader_overlay"]["touch"] = {
+            "reset_prepare_implemented": True, "l6_prepare_implemented": True,
+            "power_write_policy": "LDO6-only-1848000-to-1800000-uV-with-reset-low",
+        }
+        proof.update(pinmux_prepare=True, pinmux_writes=True, reset_prepare=True, reset_writes=True,
+                     l6_prepare=True, power_writes=True)
+        inputs["payload"] = phone.content_digest(payload)
+        phone.admit_qualification(proof, inputs, payload, True)
+        for key, value in (("l6_prepare", False), ("l6_prepare", "true"), ("power_writes", False)):
+            altered = copy.deepcopy(proof)
+            altered[key] = value
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                phone.admit_qualification(altered, dict(inputs, driver_experiment=altered), payload, True)
+        proof["loader_overlay"]["touch"]["l6_prepare_implemented"] = False
+        with self.assertRaisesRegex(ValueError, "L6"):
+            phone.admit_qualification(proof, inputs, payload, True)
+
     def test_pinmux_probe_requires_its_own_write_proof_and_command(self):
         proof, inputs, payload = clock_fixture()
         entries = phone.payload_entries(payload)
