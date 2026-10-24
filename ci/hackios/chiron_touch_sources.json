@@ -53,7 +53,7 @@
   },
   "loader_files": {
     "chiron_touch_loader.inc": "0ba4c4adc44b0a3715cbb7ef76e94a2f00b526cb96003871dfdb31d625ec2a6f",
-    "chiron_touch_reset.inc": "6378822d2dc74fa4445ecd27437ccd02f07fc4dfabc4f9c74c3d3348bdd576fc"
+    "chiron_touch_reset.inc": "d7ff5211d5b5581c36e1de6fd65336d3a19ab36b5e1a38454fe841f4babc66cc"
   },
   "local_evidence_sha256": {
     "/private/tmp/chiron-PmicVregProtocol.c": "18ea4507e1c022d0ec246327612afcfa3d463f76a005c584d914357ebdebac0f",

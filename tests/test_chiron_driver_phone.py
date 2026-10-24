@@ -84,6 +84,23 @@ def clock_fixture():
 
 
 class ExperimentAdmissionTests(unittest.TestCase):
+    def test_l6_abi_snapshot_requires_read_only_loader_and_disabled_kernel(self):
+        proof, inputs, payload = touch_fixture()
+        proof.update(l6_abi=True, read_only=True)
+        proof["loader_overlay"]["touch"] = {
+            "l6_abi_implemented": True, "kernel_start_disabled": True,
+        }
+        phone.admit_qualification(proof, inputs, payload, True)
+        for key, value in (("l6_abi", "true"), ("read_only", False), ("power_writes", True),
+                           ("reset_writes", True)):
+            altered = copy.deepcopy(proof)
+            altered[key] = value
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                phone.admit_qualification(altered, dict(inputs, driver_experiment=altered), payload, True)
+        proof["loader_overlay"]["touch"]["kernel_start_disabled"] = False
+        with self.assertRaisesRegex(ValueError, "ABI"):
+            phone.admit_qualification(proof, inputs, payload, True)
+
     def test_reset_probe_requires_loader_support_and_an_explicit_command(self):
         proof, inputs, payload = clock_fixture()
         entries = phone.payload_entries(payload)

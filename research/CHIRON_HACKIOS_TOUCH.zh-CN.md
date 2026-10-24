@@ -481,4 +481,34 @@ USB ACK completed、CPU ownership、reset preflight；现有 L6 写调用前增�
 calling SetLevelUv 标记。其后沿用既有 set_status、readback、reset 和 jumping
 日志，USB 无响应时可由照片确认最后一个已打印阶段。原硬件条件/操作不改，
 内核及系统输入复用。原正常模式和其它触摸模式仍按既有静默策略运行。
-本地触摸/loader 与 reset 共 29 项检查通过；云端 loader 链接及屏幕可见性待验证。
+本地触摸/loader 与 reset 共 29 项检查通过；屏幕可见性及实际停滞点仍待验证。
+
+运行 `40082035584` 已完成新 loader 编译、链接和镜像打包，提交为
+`765164630b37904825fb931851e042f2598cdc0b`。交付：
+`dist/chiron-driver-candidates/TOUCH-L6-TRACE-40082035584/MIX2-EXPERIMENTAL-TOUCH-L6-TRACE.img`，
+SHA-256 `c9f42b29b905846ad9f47844c1800bfcde709657aeffff084cce91fd518c79cf`。
+本地容器 SHA-256/legacy SHA-1、FAT 读回、ARM64 EFI、实际屏幕阶段字符串、
+helper/参数/打包提交绑定及容量检查通过；原内核、固件/DTB/入口和系统输入复用。
+记录为 `dist/chiron-touch-l6-trace-40082035584/local-verification.json`。
+按同目录 `START.zh-CN.md` 运行后收集最后一个 TRACE 阶段；真实停滞点及新屏幕
+日志仍待实机确认，没有新的 QEMU 或触摸通过结果。
+
+### SetLevelUv 调用区间停滞与只读 ABI 快照
+
+照片 `IMG_20261024_173949.jpg` 的 SHA-256 为
+`0c49fea38f10efa3cb2ed8fa57dbb086b70ad46675c3ab8f1298d8b2e31a110c`。
+屏幕已显示 RUN/USB ACK completed、内核载荷复制、CPU ownership、VREG locate
+和两轮 L6/L14/GPIO50 前检；最后为 `calling SetLevelUv L6=1800000`，
+没有随后的 set_status 返回记录。范围已缩小至该调用及紧邻输出路径，
+尚未跳入内核；不能仅凭照片断言回调自身永久挂住或电压写入已经发生。
+参考二进制的毫伏入口 RVA `0x219c` 只乘 1000 后跳到微伏入口 `0x2118`，
+简单换入口仍走相同实现，因此先核对实际安装的协议实例。
+
+本轮独立 `touch-l6-abi` 在 USB 初始化后、命令循环前，仅读取并打印 VREG
+revision 和 GetLevel/GetStatus/SetLevel/SetLevelUv 的地址，按原二进制相对 RVA
+计算 reference_profile。它不调用这些 PMIC 回调，不读写触控 GPIO；
+禁用 oem run/selftest 和 one-shot 内核启动，启动即可取快照，不上传系统卷。
+profile 匹配只表示相对布局相符，不是固件字节认证或电源写入资格。
+本地 46 项相关检查通过，包含 46 个寄存器/只读快照情景及实际 ARM64 loader
+编译；放置到 USB 初始化之后的改动另通过受影响的编译检查。云端交付待完成，
+真正的 SetLevelUv 停滞原因仍未确认，没有新的 QEMU/硬件通过结果。

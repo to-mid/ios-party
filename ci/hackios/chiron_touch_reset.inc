@@ -21,6 +21,37 @@ _Static_assert(sizeof(struct chiron_reset_vreg_status) == 20, "VREG status ABI")
 _Static_assert(offsetof(struct chiron_reset_vreg, get_status) == 48, "VREG status slot");
 _Static_assert(offsetof(struct chiron_reset_vreg, set_level_uv) == 56, "VREG UV slot");
 
+static int
+chiron_inspect_vreg_abi(void)
+{
+    static const efi_guid guid = {
+        0x22d38d3d, 0xe8b6, 0x4f8f, {0x9c, 0x26, 0xbc, 0xeb, 7, 0xd6, 0xcb, 0x68}
+    };
+    struct chiron_reset_vreg *vreg = NULL;
+    print("CHIRON L6 ABI: read-only callback snapshot; no kernel start\n");
+    efi_status status = BS->locate_protocol(&guid, NULL, (void **)&vreg);
+    if (EFI_ERROR(status) || !vreg) {
+        print("CHIRON L6 ABI: locate failed status=%x\n", (uint64_t)status);
+        return 0;
+    }
+    print("CHIRON L6 ABI: protocol=%x revision=%x\n",
+        (uint64_t)(uintptr_t)vreg, vreg->revision);
+    if (vreg->revision != 0x10005)
+        return 0;
+    uint64_t level = (uintptr_t)vreg->get_level;
+    uint64_t status_fn = (uintptr_t)vreg->get_status;
+    uint64_t set_mv = (uintptr_t)vreg->set_level, set_uv = (uintptr_t)vreg->set_level_uv;
+    print("CHIRON L6 ABI: GetLevel=%x GetStatus=%x\n", level, status_fn);
+    print("CHIRON L6 ABI: SetLevel=%x SetLevelUv=%x\n", set_mv, set_uv);
+    /* Compare addresses only. No VREG callback is invoked by this snapshot. */
+    uint64_t base = level >= 0x21a8 ? level - 0x21a8 : 0;
+    int match = base && status_fn == base + 0x22ec &&
+        set_mv == base + 0x219c && set_uv == base + 0x2118;
+    print("CHIRON L6 ABI: reference_profile=%d inferred_base=%x\n", (uint64_t)match, base);
+    print("CHIRON L6 ABI: snapshot complete; PMIC and reset untouched\n");
+    return match;
+}
+
 #ifndef CHIRON_TOUCH_L6_PREPARE
 #define CHIRON_TOUCH_L6_PREPARE 0
 #endif

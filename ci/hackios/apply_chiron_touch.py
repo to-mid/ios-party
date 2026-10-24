@@ -108,11 +108,13 @@ def source_overlay(source):
     return apply(source=source)
 
 
-def loader_overlay(source, reset_prepare=False, l6_prepare=False):
+def loader_overlay(source, reset_prepare=False, l6_prepare=False, l6_abi=False):
     """Add ownership metadata and, only when selected, the reset preflight."""
     source = Path(source)
     if l6_prepare and not reset_prepare:
         raise ValueError("L6 preparation requires the explicit reset experiment")
+    if l6_abi and (reset_prepare or l6_prepare):
+        raise ValueError("L6 ABI snapshot cannot enable hardware preparation")
     path = source / "xnuloader/loader.c"
     text = path.read_text()
     if 'static const struct platform platform_chiron = {' not in text:
@@ -149,11 +151,12 @@ def loader_overlay(source, reset_prepare=False, l6_prepare=False):
             '\t\t\t\tprint("chiron touch: CPU ownership changed before direct handoff; refusing boot\\n");\n'
             "\t\t\t\treturn 0;\n\t\t\t}\n"
             "\t\t\tjump_to_kernel(entry_va + slide, ba_pa);")
-    if reset_prepare:
+    if reset_prepare or l6_abi:
         replace('#include "chiron_touch_loader.inc"',
                 '#include "chiron_touch_loader.inc"\n' +
                 ('#define CHIRON_TOUCH_L6_PREPARE 1\n' if l6_prepare else '') +
                 '#include "chiron_touch_reset.inc"')
+    if reset_prepare:
         replace("\tuint64_t ranges[3] = { 0, plat->io_base, plat->io_size };",
                 "\tif (chiron_reset_requested(ba->commandLine) &&\n"
                 "\t    !chiron_reset_prepare(ba->commandLine,\n"
@@ -177,6 +180,28 @@ def loader_overlay(source, reset_prepare=False, l6_prepare=False):
         replace('\tif (chiron_reset_requested(ba->commandLine) &&',
                 '\tprint("CHIRON L6 TRACE: entering reset preflight\\n");\n'
                 '\tif (chiron_reset_requested(ba->commandLine) &&')
+    if l6_abi:
+        replace('\t\tflush_log();\n\t\tusb_command_loop();',
+                '\t\t(void)chiron_inspect_vreg_abi();\n'
+                '\t\tflush_log();\n\t\tusb_command_loop();')
+        replace('\t\t\tset_result("running", cp, 0);\n'
+                '\t\t\tfb_reply("OKAY", "");\n'
+                '\t\t\tlog_len = 0;\n'
+                '\t\t\tprint("== XNULOADER run (usb) ==\\n");\n'
+                '\t\t\tif (!run_kernel(have_cp, cp)) {\n'
+                '\t\t\t\tset_result("not-started", 0, 0);\n'
+                '\t\t\t\tcompose_logs(NULL, 0);\n'
+                '\t\t\t}',
+                '\t\t\t(void)have_cp; (void)cp;\n'
+                '\t\t\tfb_reply("FAIL", "L6 ABI snapshot only; kernel disabled");')
+        replace('\t/* One-shot mode: run the kernel that came with the image, then reset. */\n'
+                '\tif (have_payload) {\n'
+                '\t\trun_kernel(0, 0);\n'
+                '\t}\n'
+                '\treboot();\n'
+                '\treturn 0;',
+                '\tprint("CHIRON L6 ABI: snapshot only; returning without kernel start\\n");\n'
+                '\treturn 0;')
     manifest = json.loads(MANIFEST.read_text())
     helper = (HERE / "chiron_touch_loader.inc").read_bytes()
     abi = (DRIVER / "chiron_touch_abi.h").read_bytes()
@@ -186,7 +211,7 @@ def loader_overlay(source, reset_prepare=False, l6_prepare=False):
     edits = {"xnuloader/loader.c": text.encode(),
              "xnuloader/chiron_touch_loader.inc": helper,
              "xnuloader/chiron_touch_abi.h": abi}
-    if reset_prepare:
+    if reset_prepare or l6_abi:
         reset = (HERE / "chiron_touch_reset.inc").read_bytes()
         if digest(reset) != manifest["loader_files"]["chiron_touch_reset.inc"]:
             raise ValueError("touch reset loader manifest mismatch")
@@ -206,6 +231,8 @@ def loader_overlay(source, reset_prepare=False, l6_prepare=False):
                                    "read-only-L6-L14-GPIO50-preflight" if reset_prepare else None),
             "l6_prepare_implemented": l6_prepare,
             "l6_screen_trace": l6_prepare,
+            "l6_abi_implemented": l6_abi,
+            "kernel_start_disabled": l6_abi,
             "power_write_policy": "LDO6-only-1848000-to-1800000-uV-with-reset-low" if l6_prepare else None,
             "firmware_mode": "resident-not-exited",
             "ownership_assumption": "same-boot-cpu-direct-entry-and-seven-other-affinities-OFF",

@@ -435,7 +435,7 @@ class LoaderHandoffTests(unittest.TestCase):
                            check=True, capture_output=True, text=True)
             subprocess.run([str(program)], check=True)
 
-    def exercise_loader(self, phone, reset=False, l6=False):
+    def exercise_loader(self, phone, reset=False, l6=False, abi=False):
         if not (PINNED / "xnuloader/loader.c").exists():
             self.skipTest("fixed loader source unavailable")
         base_spec = importlib.util.spec_from_file_location("touch_base", OVERLAY / "apply_chiron.py")
@@ -456,9 +456,15 @@ class LoaderHandoffTests(unittest.TestCase):
             if phone:
                 modules["apply_chiron_usb"].apply(source)
                 modules["apply_chiron_memory"].apply(source)
-            report = touch.loader_overlay(source, reset_prepare=reset, l6_prepare=l6)
+            report = touch.loader_overlay(source, reset_prepare=reset, l6_prepare=l6, l6_abi=abi)
             self.assertEqual(report["firmware_mode"], "resident-not-exited")
-            self.assertEqual(len(report["result"]), 4 if reset else 3)
+            self.assertEqual(len(report["result"]), 4 if reset or abi else 3)
+            if abi:
+                generated = (source / "xnuloader/loader.c").read_text()
+                self.assertTrue(report["kernel_start_disabled"])
+                self.assertNotIn("run_kernel(have_cp, cp)", generated)
+                self.assertNotIn("run_kernel(0, 0)", generated)
+                self.assertIn("L6 ABI snapshot only; kernel disabled", generated)
             with self.assertRaisesRegex(ValueError, "already applied"):
                 touch.loader_overlay(source)
             compiler = shutil.which("clang")
@@ -496,6 +502,9 @@ class LoaderHandoffTests(unittest.TestCase):
 
     def test_l6_loader_composes_and_compiles_for_arm64(self):
         self.exercise_loader(phone=True, reset=True, l6=True)
+
+    def test_read_only_l6_abi_loader_disables_kernel_and_compiles_for_arm64(self):
+        self.exercise_loader(phone=True, abi=True)
 
 
 class MeasuredEvidenceTests(unittest.TestCase):

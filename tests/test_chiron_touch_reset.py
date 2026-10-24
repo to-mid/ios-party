@@ -116,6 +116,19 @@ int main(int argc, char **argv) {
     services.stall = stall; services.locate_protocol = locate;
     vreg.revision = 0x10005; vreg.get_level = get_level; vreg.get_status = get_status;
     vreg.set_level_uv = set_level_uv;
+    if (test >= 42) {
+        vreg.get_level = (efi_status (*)(uint32_t, uint32_t, uint32_t *))(uintptr_t)0x1021a8;
+        vreg.get_status = (efi_status (*)(uint32_t, uint32_t,
+            struct chiron_reset_vreg_status *))(uintptr_t)0x1022ec;
+        vreg.set_level = (void *)(uintptr_t)0x10219c;
+        vreg.set_level_uv = (efi_status (*)(uint32_t, uint32_t, uint32_t))(uintptr_t)
+            (test == 43 ? 0x10211c : 0x102118);
+        if (test == 44) vreg.revision--;
+        if (test == 45) locate_error = 1;
+        assert(chiron_inspect_vreg_abi() == (test == 42));
+        assert(!reads && !writes && !queries && !stalls && !voltage_writes);
+        return 0;
+    }
     const char *args = "cpus=1 -v chiron_touch_pinmux_probe=1 chiron_touch_reset=1";
     if (test == 0) expected = 1;
     if (test == 1) { io = 3; expected = 1; }
@@ -187,7 +200,7 @@ int main(int argc, char **argv) {
             raise AssertionError(result.stderr)
 
     def test_only_reset_output_changes_after_power_and_delays_pass(self):
-        for case in range(42):
+        for case in range(46):
             with self.subTest(case=case):
                 result = subprocess.run([str(self.program), str(case)], text=True, capture_output=True)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
