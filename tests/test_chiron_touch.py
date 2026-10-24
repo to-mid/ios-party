@@ -228,7 +228,7 @@ typedef uintptr_t vm_offset_t;
 typedef uintptr_t vm_size_t;
 typedef void *DTEntry;
 #define kSuccess 0
-static int maps, valid_platform, probe_mode, clock_mode, panics;
+static int maps, valid_platform, probe_mode, clock_mode, pinmux_mode, panics;
 static jmp_buf panic_env;
 static const char *panic_format;
 static uint32_t gcc_words[0xb0000/4], gpio_words[0x3000/4];
@@ -282,6 +282,9 @@ static bool PE_parse_boot_argn(const char *name, void *out, int size) {
     }
     if (!strcmp(name, "chiron_touch_clock_probe")) {
         *(uint32_t *)out = (uint32_t)clock_mode; return clock_mode != 0;
+    }
+    if (!strcmp(name, "chiron_touch_pinmux_probe")) {
+        *(uint32_t *)out = (uint32_t)pinmux_mode; return pinmux_mode != 0;
     }
     assert(!strcmp(name, "chiron_touch"));
     *(uint32_t *)out = (uint32_t)enabled; return enabled != 0;
@@ -374,6 +377,37 @@ int main(void) {
     assert(chiron_clock_write32(NULL, CHIRON_GCC_BASE + 0x52004, 1u << 17) == 0);
     chiron_clock_writes_allowed = 0;
     assert(!memcmp(gpio_before, gpio_words, sizeof(gpio_words)));
+    clock_mode = 0; pinmux_mode = 1;
+    gpio_words[0] = 0x81; gpio_words[0x1000/4] = 0x42;
+    gpio_words[0x2000/4] = 0x203; gpio_words[0x2004/4] = 0;
+    memcpy(gpio_before, gpio_words, sizeof(gpio_words));
+    if (!setjmp(panic_env)) { redwood_goodix_init(); assert(0); }
+    assert(strstr(panic_format, "CHIRON TOUCH PINMUX PROBE"));
+    assert(starts == 0 && posts == 0);
+    assert(chiron_board_report.issue == CB_RESET);
+    assert(chiron_board_report.failed_register == CB_RESET_LEVEL);
+    gpio_before[0] |= 12; gpio_before[0x1000/4] |= 12;
+    assert(!memcmp(gpio_before, gpio_words, sizeof(gpio_words)));
+    assert(!memcmp(gcc_before, gcc_words, sizeof(gcc_words)));
+    assert(!memcmp(gic_before, gic_words, sizeof(gic_words)));
+    assert(!memcmp(qup_before, qup_words, sizeof(qup_words)));
+    if (!setjmp(panic_env)) { redwood_goodix_init(); assert(0); }
+    assert(!memcmp(gpio_before, gpio_words, sizeof(gpio_words)));
+    /* Neither pin may be changed if its peer has an unknown mux or OE. */
+    for (unsigned mode = 0; mode < 2; mode++) {
+        gpio_words[0] = 0; gpio_words[0x1000/4] = mode ? 512 : 4;
+        memcpy(gpio_before, gpio_words, sizeof(gpio_words));
+        if (!setjmp(panic_env)) { redwood_goodix_init(); assert(0); }
+        assert(!memcmp(gpio_before, gpio_words, sizeof(gpio_words)));
+    }
+    gcc_words[0x17000/4] = 1;
+    if (!setjmp(panic_env)) { redwood_goodix_init(); assert(0); }
+    assert(chiron_clock_report.result != 0);
+    assert(!memcmp(gpio_before, gpio_words, sizeof(gpio_words)));
+    valid_platform = 0;
+    int previous_maps = maps;
+    if (!setjmp(panic_env)) { redwood_goodix_init(); assert(0); }
+    assert(maps == previous_maps && starts == 0 && posts == 0);
     return 0;
 }
 """)

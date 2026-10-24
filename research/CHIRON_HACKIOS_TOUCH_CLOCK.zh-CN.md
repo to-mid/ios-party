@@ -1,7 +1,8 @@
 # CHIRON BLSP1 / QUP5 时钟准备
 
 本次只新增独立时钟模块、主机夹具、测试和本文档。默认硬件行为仍关闭。
-父任务通过显式 `chiron_touch_clock_probe=1` 调用准备函数；成功后可立即调用现有
+父任务在显式 `chiron_touch_clock_probe=1` 模式或正常 `chiron_touch=1` 初始化中
+调用准备函数；成功后可立即调用现有
 `chiron_board_probe()` 继续只读诊断，再主动 panic。时钟准备本身不读取 GPIO、GIC
 或 QUP 控制器，不启动触摸工作线程，不进行 I2C 事务。
 
@@ -152,3 +153,58 @@ python3 -m unittest discover -s tests -p test_chiron_touch_clock.py -v
 
 测试是寄存器模型与语法验证。未执行设备命令、完整 XNU 编译链接或新的实机启动；
 本模块成功路径在硬件上的结果、VDD 前提及触摸功能仍待父任务生成的诊断镜像验证。
+
+## 父任务接线
+
+`chiron_xnu.c` 在显式时钟准备期间打开局部写入许可，返回后立即关闭；
+实际写回调再次检查身份与交接，物理地址仅允许上述四个 GCC 单元。
+时钟回调使用有限的微秒忙等以匹配固定源码的 `udelay(1)`，
+不会把 GCC 的 500us 预算交给可能超时的调度休眠。
+原 QUP 事务与 20ms 触摸工作循环继续使用既有调度等待。
+
+`chiron_touch_probe=1` 仍优先执行，只读路径不调用准备函数。
+新 `chiron_touch_clock_probe=1` 先尝试时钟准备，成功后调用板级探针读引脚等状态，
+最后输出单独的 `CHIRON TOUCH CLOCK PROBE` 诊断 panic；不启动 worker、
+不初始化或复位 QUP，也不发 I2C 事务。失败时保留主错误、阶段、寄存器、
+changed/remaining 和 cleanup 状态，不把尚未检查的板级条件记为 ready。
+
+镜像入口为显式 `touch-clock-probe`，证明记录必须声明
+`clock_prepare=true`、`clock_writes=true`、`read_only=false`，
+并绑定含时钟实现的新源码构建。旧 `touch-probe` 只接受原只读参数，
+不能通过额外命令行参数悄悄变成写时钟实验。新镜像的生成与静态复核结果另记；
+实机时钟启动及后续 GPIO/F01/F12 仍待用户启动后读取日志。
+
+## 完整构建
+
+集成后的独立工作目录执行 70 项检查，68 项通过，2 项因未包含私有实机采集而
+明确跳过。旧只读路径仍执行零寄存器写入检查；时钟模式另外检查四地址写边界、
+无效平台拒绝、已经开启时零写入，以及停止前不创建触控 worker。
+
+源码提交 `ce8267d0b90bdf41f36038796124359176ad16ea` 经运行 `40070403806`
+完成新 XNU 与 EFI 链接。本地复核三个产物哈希、ARM64 格式、
+`chiron_clock_prepare` 实际符号、两个独立探针的 panic 字符串与空未定义符号表，
+结果在 `dist/chiron-touch-source-40070403806/local-verification.json`。
+实际内核 SHA-256 为
+`1ebc391fbfce261985ecd780fe5bfbf8a242d6a44b17d8fe6bd9bbb0a2805923`。
+上游 make 的导出名单检查仍有既有错误（退出码 2），不宣称全部 make 目标通过。
+这些结果没有证明新的时钟写入已在手机执行或触摸可用。
+
+## 时钟验证镜像
+
+运行 `40070898479` 已生成 `MIX2-EXPERIMENTAL-TOUCH-CLOCK-PROBE.img`，
+交付目录为 `dist/chiron-driver-candidates/TOUCH-CLOCK-PROBE-40070898479/`。
+26,697,728 字节镜像 SHA-256：
+`c0fc43ef011612ab9be116459086a6ec708e7742cd34a1feaa19ed4c12e03a5e`。
+
+本地逐项复核结果位于
+`dist/chiron-touch-clock-probe-40070898479/local-verification.json`：
+实际内嵌内核绑定上述源码构建，XNUP 参数只有显式
+`-v chiron_touch_clock_probe=1` 模式，证明字段明确为
+`clock_prepare=true/clock_writes=true/read_only=false`。
+核对整镜像 SHA-256、Android boot SHA-1、FAT 文件、实验菜单与根卷；
+UEFI body、DTB、USB 入口与 HK6c 一致。没有启动手机，实机结果待后续日志。
+
+2026-10-24 补记：已通过 USB 取回该镜像实际运行日志，时钟准备
+`result=0 step=12 changed=3a`，前后快照确认 AHB vote、QUP5 branch 和 XO root
+均满足检查。下一处拒绝为 GPIO87 pinmux（`board=-23 bad=6`），不是时钟超时；
+详见触摸主状态的当日小修记录。此结果仍不授予 GPIO、F01/F12 或触摸运行资格。

@@ -11,7 +11,7 @@ static int starts_with(const char *, const char *);
 static int
 chiron_touch_loader_requested(const char *args)
 {
-    int seen = 0, probe_seen = 0, clock_seen = 0, selected = 0;
+    int seen = 0, probe_seen = 0, clock_seen = 0, pinmux_seen = 0, selected = 0;
     while (*args) {
         const char *start;
         while (*args == ' ') args++;
@@ -27,6 +27,10 @@ chiron_touch_loader_requested(const char *args)
             selected = 1;
         } else if (starts_with(start, "chiron_touch_clock_probe=")) {
             if (clock_seen++ || args - start != 26 || start[25] != '1')
+                return 0;
+            selected = 1;
+        } else if (starts_with(start, "chiron_touch_pinmux_probe=")) {
+            if (pinmux_seen++ || args - start != 27 || start[26] != '1')
                 return 0;
             selected = 1;
         }

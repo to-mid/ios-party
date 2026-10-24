@@ -375,6 +375,82 @@ chiron_touch_clock_probe_stop(void)
 }
 
 static void
+chiron_touch_pinmux_probe_stop(void)
+{
+    uint32_t changed = 0;
+    int status = chiron_prepare_clocks();
+    if (!status) {
+        for (unsigned reg = CB_SDA_MUX; reg <= CB_SCL_MUX; reg++) {
+            status = chiron_board_probe(&chiron_board_io, &chiron_board_report);
+            if (status != CB_PINMUX && status != CB_RESET && status != CB_READY)
+                break;
+            if (!chiron_board_report.owner_assumed) {
+                status = CB_OWNERSHIP;
+                break;
+            }
+            /* Pinned pinctrl-msm8998: function 3, mux bits [5:2].
+             * Accept only passive GPIO or existing I2C; preserve pull/drive. */
+            int supported = 1;
+            for (unsigned pin = CB_SDA_MUX; pin <= CB_SCL_MUX; pin++) {
+                uint32_t mode = chiron_board_report.values[pin] & 0x23cu;
+                if (mode != 0 && mode != 12)
+                    supported = 0;
+            }
+            if (!supported) {
+                status = CB_PINMUX;
+                break;
+            }
+            uint64_t physical = chiron_board_register_address(reg);
+            uint32_t value;
+            if (chiron_physical_read(NULL, physical, &value)) {
+                status = CB_READ_FAILED;
+                break;
+            }
+            if ((value & 0x23cu) == 12)
+                continue;
+            if ((value & 0x23cu) != 0) {
+                status = CB_PINMUX;
+                break;
+            }
+            struct chiron_board_report identity;
+            if (chiron_board_identity(&chiron_board_io, &identity) ||
+                !identity.owner_assumed) {
+                status = CB_OWNERSHIP;
+                break;
+            }
+            vm_offset_t mapped = chiron_map_register(physical);
+            if (!mapped) {
+                status = CB_READ_FAILED;
+                break;
+            }
+            changed |= 1u << reg;
+            chiron_io_barrier(NULL);
+            *(volatile uint32_t *)mapped = (value & ~0x3cu) | 12u;
+            chiron_io_barrier(NULL);
+            if (chiron_physical_read(NULL, physical, &value) || (value & 0x23cu) != 12) {
+                status = CB_PINMUX;
+                break;
+            }
+            status = 0;
+        }
+        if (!status || status == CB_RESET)
+            status = chiron_board_probe(&chiron_board_io, &chiron_board_report);
+    }
+    chiron_probe_report();
+    printf("CHIRON TOUCH PINMUX PROBE result=%d changed=%x; no reset/regulator/QUP writes or worker\n",
+        status, (unsigned)changed);
+    panic("CHIRON TOUCH PINMUX PROBE result=%d changed=%x board=%d bad=%d obs=%x\n"
+        "GPIO87=%x GPIO88=%x resetcfg=%x resetio=%x\n"
+        "GCC AND I2C5 MUX WRITES REQUESTED. NO TOUCH TRANSACTIONS.",
+        status, (unsigned)changed, chiron_board_report.issue,
+        chiron_board_report.failed_register, (unsigned)chiron_board_report.observed,
+        (unsigned)chiron_board_report.values[CB_SDA_MUX],
+        (unsigned)chiron_board_report.values[CB_SCL_MUX],
+        (unsigned)chiron_board_report.values[CB_RESET_CONFIG],
+        (unsigned)chiron_board_report.values[CB_RESET_LEVEL]);
+}
+
+static void
 chiron_touch_thread(void *parameter, wait_result_t result)
 {
     int status;
@@ -420,7 +496,7 @@ chiron_touch_thread(void *parameter, wait_result_t result)
 void
 redwood_goodix_init(void)
 {
-    uint32_t enabled = 0, probe = 0, clocks = 0;
+    uint32_t enabled = 0, probe = 0, clocks = 0, pinmux = 0;
     thread_t thread;
     int status;
     /* Probe takes priority even if the payload also requests normal touch. */
@@ -430,6 +506,10 @@ redwood_goodix_init(void)
     }
     if (PE_parse_boot_argn("chiron_touch_clock_probe", &clocks, sizeof(clocks)) && clocks == 1) {
         chiron_touch_clock_probe_stop();
+        return;
+    }
+    if (PE_parse_boot_argn("chiron_touch_pinmux_probe", &pinmux, sizeof(pinmux)) && pinmux == 1) {
+        chiron_touch_pinmux_probe_stop();
         return;
     }
     if (!PE_parse_boot_argn("chiron_touch", &enabled, sizeof(enabled)) ||

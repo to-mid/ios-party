@@ -65,6 +65,8 @@ def _overlay(root, prefix, manifest):
         "photo_probe_boot_arg": "chiron_touch_probe=1",
         "clock_probe_boot_arg": "chiron_touch_clock_probe=1",
         "clock_prepare_implemented": True,
+        "pinmux_prepare_implemented": True,
+        "pinmux_probe_boot_arg": "chiron_touch_pinmux_probe=1",
         "clock_probe_writes": "BLSP1-AHB-vote-and-QUP5-XO-clock-only",
         "kernel_rebuild_required": True,
         "hardware_observed": False,

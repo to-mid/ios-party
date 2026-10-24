@@ -84,6 +84,30 @@ def clock_fixture():
 
 
 class ExperimentAdmissionTests(unittest.TestCase):
+    def test_pinmux_probe_requires_its_own_write_proof_and_command(self):
+        proof, inputs, payload = clock_fixture()
+        entries = phone.payload_entries(payload)
+        entries["kernel"] += b"CHIRON TOUCH PINMUX PROBE"
+        proof["command_line"] = "cpus=1 epoch=1792760000 -v chiron_touch_pinmux_probe=1"
+        entries["cmdline"] = proof["command_line"].encode() + b"\0"
+        payload = pack(list(entries.items()))
+        kernel = phone.content_digest(entries["kernel"])
+        proof["kernel"] = kernel
+        proof["source_build"]["artifacts"]["kernel.development.hackios"] = kernel
+        proof["source_build"]["overlays"]["kernel"]["changes"]["touch"]["pinmux_prepare_implemented"] = True
+        proof.update(pinmux_prepare=True, pinmux_writes=True)
+        inputs["payload"] = phone.content_digest(payload)
+        phone.admit_qualification(proof, inputs, payload, True)
+        for key, value in (("pinmux_prepare", False), ("pinmux_writes", False),
+                           ("clock_prepare", False), ("pinmux_prepare", "true")):
+            altered = copy.deepcopy(proof)
+            altered[key] = value
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                phone.admit_qualification(altered, dict(inputs, driver_experiment=altered), payload, True)
+        proof["source_build"]["overlays"]["kernel"]["changes"]["touch"]["pinmux_prepare_implemented"] = False
+        with self.assertRaisesRegex(ValueError, "pinmux"):
+            phone.admit_qualification(proof, inputs, payload, True)
+
     def test_both_source_experiments_bind_actual_kernel_root_and_cpu_arguments(self):
         for count in (2, 8):
             proof, inputs, payload = fixture(count)

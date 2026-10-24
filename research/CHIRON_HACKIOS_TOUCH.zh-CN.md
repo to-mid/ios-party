@@ -264,3 +264,75 @@ SHA-256、legacy Android SHA-1、FAT 内文件、实际 XNUP 内核/根卷/探�
 实验菜单，以及与 HK6c 相同的 UEFI body、附加 DTB 和 USB 入口。
 此探针预期在 GUI 前触发诊断 panic，可能返回 resident loader；
 照片或返回后的 `oem log` / `get_staged` 日志是下一步接管硬件所需的实际证据。
+
+## 首次探针照片反馈
+
+2026-10-24，用户提供 `IMG_20261024_120203.jpg`。本地原图为 4344×5792，
+照片 SHA-256 为 `69720abe1b8e28148efa1b2d9e71c1f000273873840a03977dcd8033a48e47c0`。
+可读 kernel UUID 与探针内核的 `05F21AE2-58D1-3BED-918E-66FEDA3034E6`
+一致；回溯中的 LR `0xfffffff007494864` 对应前一条
+`0xfffffff007494860` 的 `bl _panic`。该指令位于
+`redwood_goodix_init+0x19c`，格式串就是 `CHIRON TOUCH PROBE READ ONLY`。
+按返回地址减四归属调用点，不能把它误记为下一符号 `chiron_property` 的故障。
+
+此反馈支持已到达预设的同步诊断 panic，不是仅凭通用回溯猜测新增异常。
+照片没有包含 panic 开头的 status/bad/obs/owner 和寄存器值，因此尚不能判断
+实际时钟、引脚、复位或所有权条件，也不能记为触摸通过或 MMIO 读取成功。
+本轮只读 `fastboot devices` 没有枚举到设备，未读取 loader 日志，
+未执行手机 boot、flash 或 reboot。原始判断边界见
+`research/hackios-reuse/touch-probe-photo-20261024.json`。
+
+## USB 取回实际诊断值
+
+同日用户要求改用 USB 读取。系统 USB 树实际存在 VID/PID `18d1:d00d` 的
+`xnuloader`；沙箱内 fastboot 空列表不能作为设备断开的证据。
+沙箱外只读确认 product=`xnuloader`、board=`chiron` 后，执行 `oem log` 和
+device-to-host 的 `get_staged`，成功保存 21,294 字节日志：
+`out/chiron-touch-probe-usb-20261024.log`，SHA-256 为
+`2a5cb14e4e50eead7cd5cb20950e60cac42fedf51c81ed80a2c745ba4359559f`。
+此次没有 stage、run、boot、flash 或 reboot。
+
+日志确认内核已返回 loader，UUID 与上述探针一致，实际诊断为
+`status=-22 bad=1 obs=3f owner=1/1/fe/1`。第一处拒绝来自
+APCS_BRANCH_VOTE：实测 `0x80889d80` 缺少 BLSP1 AHB 投票 bit17
+（mask `0x00020000`）。AHB_CBCR=`0x8000c220` 的 halt 位为 1；
+QUP5_I2C_CBCR=`0x80000000` 的 enable 位为 0、halt 位为 1，
+与接口/核心时钟未开启一致。QUP 根命令为 `0x80000000`，配置为 `0`；
+BLSP1_BCR=`0`。
+
+这是探针运行时保留的六个 GCC 读数，不是返回固件后重新读取的实时状态。
+handoff 元组满足当前实现的执行隔离预检，但不是总线硬件锁或 EBS 证明。
+`obs=0x3f` 仅标记前六个 GCC 寄存器；GPIO/GIC/QUP 尚未读取，其零值为占位。
+因此不能据此判定引脚或 reset 状态正确/错误，也不能记为触摸可用。
+下一步需补齐有来源依据的时钟初始化，再验证 pinmux 与 F01/F12 状态。
+结构化记录为 `research/hackios-reuse/touch-probe-usb-20261024.json`。
+
+已据此加入有来源依据的 BLSP1/QUP5 时钟初始化和独立写时钟验证模式，
+源码链接运行 `40070403806`、镜像打包运行 `40070898479` 均完成，
+静态核对后的交付位于
+`dist/chiron-driver-candidates/TOUCH-CLOCK-PROBE-40070898479/`。
+此模式会请求有限 GCC 时钟写入，仍不启动触控事务；
+旧只读探针保留。初始化顺序、超时和不能保证完成的回滚边界见
+`research/CHIRON_HACKIOS_TOUCH_CLOCK.zh-CN.md`。尚无新版本的手机运行结果。
+
+## 2026-10-24 时钟实机反馈与 pinmux 小修
+
+USB 已取回 `out/chiron-touch-clock-probe-usb-20261024-round2.log`（21,811 字节，
+SHA-256 `be675804eac027c80a128861ca7bf6e0cb176bcf98fe2a25eb39fc9c2987950e`）。
+参数为 `chiron_touch_clock_probe=1`，内核 UUID 为
+`B1F4E435-1F0F-3DEC-8C57-029ACEA77883`。时钟准备实机返回
+`result=0 step=12 changed=3a`；AHB=`2000c220`、QUP clock=`1`、
+root CMD=`0`、CFG=`1`。板级检查前进至 `board=-23 bad=6 obs=3ff`：
+GPIO87/88 CFG 均为 `0`，GPIO89 CFG=`203`、IO=`0`。
+这是内核运行时快照；GIC/QUP 状态尚未读取，触摸仍未验证。
+本轮只执行身份查询及 device-to-host 日志读取，没有启动、上传系统或重启。
+
+小修增加独立 `chiron_touch_pinmux_probe=1`：沿用时钟准备后，仅将
+GPIO87/88 mux `[5:2]` 从 GPIO 改为 I2C5 function3，保留 pull/drive；
+未知 mux、OE 已启用、时钟或所有权检查失败时拒绝修改。
+旧只读/时钟探针保持原行为。它不写 reset、PMIC、IRQ 或 QUP，不创建 worker。
+两个 mux 分别读回，不声称原子更新；中途失败可保留已完成的 mux，
+`changed` 标记实际尝试的寄存器，后续只读快照用于判断。
+本轮目标为 mux 读回 `0xc` 并越过 `bad=6`；按当前快照预计下一阻塞为
+`board=-24 bad=9`（reset 仍低）。不以进入桌面或触摸恢复验收。
+本地触摸、时钟及打包入口共 48 项检查通过；新内核编译与镜像交付待云端。

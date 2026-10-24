@@ -97,6 +97,15 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
                 raise ValueError("clock preparation requires explicit write-mode proof")
         elif proof.get("read_only", True) is not True or proof.get("clock_writes", False):
             raise ValueError("read-only probe cannot request clock writes")
+        if type(proof.get("pinmux_prepare", False)) is not bool:
+            raise ValueError("pinmux preparation mode must be an explicit boolean")
+        if proof.get("pinmux_prepare", False):
+            if (touch.get("pinmux_prepare_implemented") is not True
+                    or proof.get("clock_prepare") is not True
+                    or proof.get("pinmux_writes") is not True):
+                raise ValueError("pinmux preparation requires explicit write-mode proof")
+        elif proof.get("pinmux_writes", False):
+            raise ValueError("probe cannot request undeclared pinmux writes")
     if inputs["profile"]["cpu_count"] != chosen["cpu_count"]:
         raise ValueError("phone CPU profile differs")
     if proof["loader_overlay"]["cpu_limit"] != chosen["cpu_count"]:
@@ -109,6 +118,9 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
     if chosen["touch"] and proof.get("clock_prepare", False):
         if b"CHIRON TOUCH CLOCK PROBE" not in entries["kernel"]:
             raise ValueError("payload kernel lacks the clock probe")
+    if chosen["touch"] and proof.get("pinmux_prepare", False):
+        if b"CHIRON TOUCH PINMUX PROBE" not in entries["kernel"]:
+            raise ValueError("payload kernel lacks the pinmux probe")
     root = content_digest(entries["ramdisk"])
     if any(root[key] != inputs["small_root"][key] for key in root):
         raise ValueError("payload small root differs")
@@ -118,7 +130,8 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
     command = entries["cmdline"]
     pattern = rb"cpus=" + str(chosen["cpu_count"]).encode() + rb" epoch=[0-9]+"
     if chosen["touch"]:
-        pattern += (rb" -v chiron_touch_clock_probe=1" if proof.get("clock_prepare", False)
+        pattern += (rb" -v chiron_touch_pinmux_probe=1" if proof.get("pinmux_prepare", False)
+                    else rb" -v chiron_touch_clock_probe=1" if proof.get("clock_prepare", False)
                     else rb" -v chiron_touch_probe=1")
     if (not command.endswith(b"\0") or b"\0" in command[:-1]
             or not re.fullmatch(pattern + rb"\0", command)
@@ -131,7 +144,7 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
             "hardware_observed": False}
 
 
-def verify_source(folder, variant, source_run, clock_prepare=False):
+def verify_source(folder, variant, source_run, clock_prepare=False, pinmux_prepare=False):
     proof = json.loads((folder / "driver-build.json").read_text())
     chosen = selection(variant)
     if (proof.get("schema") != "chiron-driver-build-v1"
@@ -164,6 +177,8 @@ def verify_source(folder, variant, source_run, clock_prepare=False):
             raise ValueError("touch source build has no board probe")
         if clock_prepare and report.get("clock_prepare_implemented") is not True:
             raise ValueError("touch source build has no clock preparation")
+        if pinmux_prepare and report.get("pinmux_prepare_implemented") is not True:
+            raise ValueError("touch source build has no pinmux preparation")
     return proof
 
 
@@ -176,14 +191,18 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--variant", choices=("smp2", "smp8", "touch"), required=True)
     parser.add_argument("--clock-prepare", action="store_true")
+    parser.add_argument("--pinmux-prepare", action="store_true")
     args = parser.parse_args()
     import apply_chiron_smp
     import cloud
 
     cloud.require_runner()
+    if args.pinmux_prepare:
+        args.clock_prepare = True
     if args.clock_prepare and args.variant != "touch":
-        parser.error("--clock-prepare requires the touch variant")
-    source = verify_source(args.source_build, args.variant, args.source_run, args.clock_prepare)
+        parser.error("clock/pinmux preparation requires the touch variant")
+    source = verify_source(args.source_build, args.variant, args.source_run,
+                           args.clock_prepare, args.pinmux_prepare)
     chosen = selection(args.variant)
     base = args.runtime / "phone"
     inputs = json.loads((base / "inputs.json").read_text())
@@ -202,7 +221,8 @@ def main():
     shutil.copy2(args.work / "xnuloader/loader.efi", args.output / "loader.efi")
     command_line = f"{apply_chiron_smp.command_line(chosen['cpu_count'])} epoch={int(time.time())}"
     if chosen["touch"]:
-        command_line += (" -v chiron_touch_clock_probe=1" if args.clock_prepare
+        command_line += (" -v chiron_touch_pinmux_probe=1" if args.pinmux_prepare
+                         else " -v chiron_touch_clock_probe=1" if args.clock_prepare
                          else " -v chiron_touch_probe=1")
     kernel = args.source_build / "kernel.development.hackios"
     cloud.command([sys.executable, args.work / "xnuloader/mkpayload.py", "--usb",
@@ -221,6 +241,8 @@ def main():
         "probe_only": chosen["touch"],
         "clock_prepare": args.clock_prepare,
         "clock_writes": args.clock_prepare,
+        "pinmux_prepare": args.pinmux_prepare,
+        "pinmux_writes": args.pinmux_prepare,
         "read_only": chosen["touch"] and not args.clock_prepare,
         "runtime_qualified": False, "hardware_observed": False, "phone_boot_ready": False,
     }
