@@ -200,8 +200,11 @@ def loader_overlay(source, reset_prepare=False, l6_prepare=False, l6_abi=False):
                 '\t}\n'
                 '\treboot();\n'
                 '\treturn 0;',
-                '\tprint("CHIRON L6 ABI: snapshot only; returning without kernel start\\n");\n'
-                '\treturn 0;')
+                '\tprint("CHIRON L6 ABI: snapshot only; kernel disabled; staying resident\\n");\n'
+                '\tfor (;;) {\n'
+                '\t\twdt_pet();\n'
+                '\t\tBS->stall(100000);\n'
+                '\t}')
     manifest = json.loads(MANIFEST.read_text())
     helper = (HERE / "chiron_touch_loader.inc").read_bytes()
     abi = (DRIVER / "chiron_touch_abi.h").read_bytes()
