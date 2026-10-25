@@ -439,6 +439,11 @@ int main(void) {
     assert(starts == 2 && terminations == 3 && posts == 0);
     assert(!memcmp(gpio_before, gpio_words, sizeof(gpio_words)));
     assert(!memcmp(qup_before, qup_words, sizeof(qup_words)));
+    chiron_native.reader.refusal = (struct chiron_f12_refusal){
+        .field = "F01.Control0.configured/sleep", .address = 0x31, .bytes = 1,
+        .expected = "(value & 0x83) == 0x80"
+    };
+    chiron_layout_refusal_report();
     return 0;
 }
 """)
@@ -451,6 +456,8 @@ int main(void) {
         self.assertIn("platform refused before MMIO", result.stdout)
         self.assertIn("hardware untouched", result.stdout)
         self.assertIn("read-only, no transport or worker", result.stdout)
+        self.assertIn("F12 refusal field=F01.Control0.configured/sleep address=31 actual=00 "
+                      "expected=(value & 0x83) == 0x80; no sensor configuration writes", result.stdout)
 
 
 class LoaderHandoffTests(unittest.TestCase):

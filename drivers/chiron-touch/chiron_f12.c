@@ -7,13 +7,33 @@
 #include "chiron_f12.h"
 
 static int
+cf_refuse(struct chiron_f12_reader *reader, const char *field, uint16_t address,
+    const uint8_t *actual, size_t bytes, const char *expected)
+{
+    reader->refusal = (struct chiron_f12_refusal){
+        .field = field, .expected = expected, .address = address
+    };
+    if (bytes > sizeof(reader->refusal.actual))
+        bytes = sizeof(reader->refusal.actual);
+    reader->refusal.bytes = (uint8_t)bytes;
+    for (size_t i = 0; i < bytes; i++)
+        reader->refusal.actual[i] = actual[i];
+    return CHIRON_DSX_UNVERIFIED_LAYOUT;
+}
+
+static int
 cf_read(struct chiron_f12_reader *reader, uint16_t base, unsigned offset,
     uint8_t *out, size_t length)
 {
     if (!reader->read || (base >> 8) >= CHIRON_DSX_PAGES ||
         offset >= 0xffu - (base & 0xffu) ||
-        length > 0xffu - (base & 0xffu) - offset)
-        return CHIRON_DSX_UNVERIFIED_LAYOUT;
+        length > 0xffu - (base & 0xffu) - offset) {
+        uint8_t request[] = {(uint8_t)base, (uint8_t)(base >> 8),
+            (uint8_t)offset, (uint8_t)(offset >> 8),
+            (uint8_t)length, (uint8_t)(length >> 8)};
+        return cf_refuse(reader, "register_read.bounds", base, request, sizeof(request),
+            "base/offset/count (LE16) within supported pages and below page selector");
+    }
     if (reader->read(reader->context, (uint16_t)(base + offset), out, length) != (int)length)
         return CHIRON_DSX_IO;
     return 0;
@@ -88,44 +108,64 @@ chiron_f12_validate(void *context, const struct chiron_dsx_functions *functions,
     unsigned control23_size;
     int result;
     *layout = (struct chiron_dsx_layout){0};
+    if (reader)
+        reader->refusal = (struct chiron_f12_refusal){0};
     if (!reader || !functions || functions->f01.number != 1 ||
         functions->f12.number != 0x12 || functions->f01.version ||
-        functions->f12.version || reader->flip > 3)
+        functions->f12.version || reader->flip > 3) {
+        if (reader)
+            return cf_refuse(reader, "function descriptors/rotation", 0, NULL, 0,
+                "F01=1, F12=0x12, versions=0, flip<=3");
         return CHIRON_DSX_UNVERIFIED_LAYOUT;
+    }
 #define CF_READ(base, offset, data, length) do { \
     result = cf_read(reader, base, offset, data, length); \
     if (result) return result; \
 } while (0)
     CF_READ(functions->f01.data, 0, &status, 1);
     CF_READ(functions->f01.control, 0, &device_control, 1);
-    if (status != 0 || (device_control & 0x83u) != 0x80u)
-        return CHIRON_DSX_UNVERIFIED_LAYOUT;
+    if (status != 0)
+        return cf_refuse(reader, "F01.Data0.status", functions->f01.data,
+            &status, 1, "0x00");
+    if ((device_control & 0x83u) != 0x80u)
+        return cf_refuse(reader, "F01.Control0.configured/sleep", functions->f01.control,
+            &device_control, 1, "(value & 0x83) == 0x80");
     CF_READ(functions->f01.query, 0, f01, sizeof(f01));
     /* Upstream reads the build ID separately from the standard query burst. */
     CF_READ(functions->f01.query, 18, build_id, sizeof(build_id));
     uint32_t build = (uint32_t)build_id[0] | (uint32_t)build_id[1] << 8 |
         (uint32_t)build_id[2] << 16;
-    if (f01[0] != 1 || build != CHIRON_DSX_MEASURED_BUILD)
-        return CHIRON_DSX_UNVERIFIED_LAYOUT;
+    if (f01[0] != 1)
+        return cf_refuse(reader, "F01.Query0.manufacturer", functions->f01.query,
+            f01, 1, "0x01");
+    if (build != CHIRON_DSX_MEASURED_BUILD)
+        return cf_refuse(reader, "F01.Query18.build", functions->f01.query + 18,
+            build_id, sizeof(build_id), "little-endian build 2676394");
     CF_READ(functions->f12.query, 4, &q5_size, 1);
     if (q5_size < 5 || q5_size > sizeof(q5))
-        return CHIRON_DSX_UNVERIFIED_LAYOUT;
+        return cf_refuse(reader, "F12.Query4.Query5_size", functions->f12.query + 4,
+            &q5_size, 1, "5..9");
     CF_READ(functions->f12.query, 5, q5, q5_size);
     if (!cf_present(q5, 8) || !cf_present(q5, 20) ||
         !cf_present(q5, 23) || !cf_present(q5, 28))
-        return CHIRON_DSX_UNVERIFIED_LAYOUT;
+        return cf_refuse(reader, "F12.Query5.control_presence", functions->f12.query + 5,
+            q5, q5_size, "Ctrl8,20,23,28 present");
     if (!q5[0] || q5[0] > sizeof(q6))
-        return CHIRON_DSX_UNVERIFIED_LAYOUT;
+        return cf_refuse(reader, "F12.Query5.Query6_size", functions->f12.query + 5,
+            q5, 1, "1..64");
     CF_READ(functions->f12.query, 6, q6, q5[0]);
     result = cf_control23_size(q5, q6, q5[0], &control23_size);
     if (result)
-        return result;
+        return cf_refuse(reader, "F12.Query6.Ctrl23_descriptor", functions->f12.query + 6,
+            q6, q5[0], "valid size/subpacket encoding; Ctrl23 subpackets 0,1 present");
     CF_READ(functions->f12.query, 7, &q8_size, 1);
     if (q8_size < 2 || q8_size > sizeof(q8))
-        return CHIRON_DSX_UNVERIFIED_LAYOUT;
+        return cf_refuse(reader, "F12.Query7.Query8_size", functions->f12.query + 7,
+            &q8_size, 1, "2..5");
     CF_READ(functions->f12.query, 8, q8, q8_size);
     if (!(q8[1] & 2u)) /* Data1 must exist; Data0 determines its offset. */
-        return CHIRON_DSX_UNVERIFIED_LAYOUT;
+        return cf_refuse(reader, "F12.Query8.Data1_presence", functions->f12.query + 8,
+            q8, q8_size, "Data1 bit set");
     CF_READ(functions->f12.control, cf_offset(q5, 8), control8, sizeof(control8));
     CF_READ(functions->f12.control, cf_offset(q5, 20), control20, sizeof(control20));
     CF_READ(functions->f12.control, cf_offset(q5, 23), control23, control23_size);
@@ -136,22 +176,35 @@ chiron_f12_validate(void *context, const struct chiron_dsx_functions *functions,
      * Optional Ctrl23 subpackets are described by Query6. Reject mappings
      * that relabel another object class as a finger.
      */
-    if (control28 != 0xff || control20[2] != 0 || !(control23[0] & 1u) ||
-        !control23[1] || control23[1] > CHIRON_DSX_CONTACTS)
-        return CHIRON_DSX_UNVERIFIED_LAYOUT;
+    if (control28 != 0xff)
+        return cf_refuse(reader, "F12.Control28.report_enable",
+            functions->f12.control + cf_offset(q5, 28), &control28, 1, "0xff");
+    if (control20[2] != 0)
+        return cf_refuse(reader, "F12.Control20.reporting_mode",
+            functions->f12.control + cf_offset(q5, 20) + 2, control20 + 2, 1, "0x00");
+    if (!(control23[0] & 1u))
+        return cf_refuse(reader, "F12.Control23.finger_enable",
+            functions->f12.control + cf_offset(q5, 23), control23, 1, "bit 0 set");
+    if (!control23[1] || control23[1] > CHIRON_DSX_CONTACTS)
+        return cf_refuse(reader, "F12.Control23.contacts",
+            functions->f12.control + cf_offset(q5, 23) + 1, control23 + 1, 1, "1..10");
     for (unsigned i = 2; i < control23_size; i++)
         if (control23[i] != 0)
-            return CHIRON_DSX_UNVERIFIED_LAYOUT;
+            return cf_refuse(reader, "F12.Control23.optional_subpacket",
+                functions->f12.control + cf_offset(q5, 23) + i, control23 + i, 1, "0x00");
     uint16_t max_x = (uint16_t)(control8[0] | (uint16_t)control8[1] << 8);
     uint16_t max_y = (uint16_t)(control8[2] | (uint16_t)control8[3] << 8);
     unsigned offset = q8[1] & 1u;
     if (!max_x || !max_y ||
         offset + (size_t)control23[1] * 8 > 0xffu - (functions->f12.data & 0xffu))
-        return CHIRON_DSX_UNVERIFIED_LAYOUT;
+        return cf_refuse(reader, "F12.Control8.geometry/Data1_bounds",
+            functions->f12.control + cf_offset(q5, 8), control8, sizeof(control8),
+            "nonzero max X/Y; all contact bytes below page selector");
     /* Status/ready must also remain valid after the control/query reads. */
     CF_READ(functions->f01.data, 0, &status, 1);
     if (status != 0)
-        return CHIRON_DSX_UNVERIFIED_LAYOUT;
+        return cf_refuse(reader, "F01.Data0.status_after_queries", functions->f01.data,
+            &status, 1, "0x00");
     *layout = (struct chiron_dsx_layout){
         .f12 = functions->f12, .data1 = (uint16_t)(functions->f12.data + offset),
         .max_x = max_x, .max_y = max_y, .object_bytes = 8,
@@ -163,7 +216,8 @@ chiron_f12_validate(void *context, const struct chiron_dsx_functions *functions,
             data15_offset += (q8[1 + i / 8] >> (i % 8)) & 1u;
         unsigned bytes = (control23[1] + 7) / 8;
         if (data15_offset + bytes > 0xffu - (functions->f12.data & 0xffu))
-            return CHIRON_DSX_UNVERIFIED_LAYOUT;
+            return cf_refuse(reader, "F12.Query8.Data15_bounds", functions->f12.query + 8,
+                q8, q8_size, "Data15 bytes below page selector");
         layout->data15 = (uint16_t)(functions->f12.data + data15_offset);
         layout->data15_bytes = (uint8_t)bytes;
     }

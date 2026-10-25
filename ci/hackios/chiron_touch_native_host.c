@@ -33,7 +33,7 @@ sensor_read(void *context, uint16_t address, uint8_t *out, size_t length)
     if (address == functions.f01.data && length == 1) {
         out[0] = (uint8_t)m.sensor_status;
     } else if (address == functions.f01.control && length == 1) {
-        out[0] = m.layout_case == 2 ? 0x81 : 0x80;
+        out[0] = m.layout_case == 33 ? 0 : m.layout_case == 2 ? 0x81 : 0x80;
     } else if (address == functions.f01.query && length == 21) {
         out[0] = m.layout_case == 3 ? 2 : 1;
     } else if (address == functions.f01.query + 18 && length == 3) {
@@ -453,7 +453,7 @@ static void
 layout(void)
 {
     struct chiron_dsx_layout result;
-    struct chiron_f12_reader reader = {&m, sensor_read, 0};
+    struct chiron_f12_reader reader = {.context = &m, .read = sensor_read};
     setup();
     assert(chiron_f12_validate(&reader, &functions, &result) == 0);
     assert(result.contacts == 2 && result.object_bytes == 8 && result.data1 == 0x161);
@@ -461,14 +461,37 @@ layout(void)
     for (int mode = 1; mode <= 28; mode++) {
         setup(); m.layout_case = mode;
         int status = chiron_f12_validate(&reader, &functions, &result);
-        if (mode == 17 || mode == 22) assert(status == 0);
-        else assert(status < 0);
+        if (mode == 17 || mode == 22) {
+            assert(status == 0 && !reader.refusal.field);
+        } else {
+            assert(status < 0);
+            if (mode != 1)
+                assert(reader.refusal.field && reader.refusal.expected);
+        }
         assert(!m.writes);
     }
     for (unsigned status = 1; status <= 255; status++) {
         setup(); m.sensor_status = (int)status;
         assert(chiron_f12_validate(&reader, &functions, &result) < 0 && !m.writes);
+        assert(!strcmp(reader.refusal.field, "F01.Data0.status"));
+        assert(reader.refusal.address == functions.f01.data && reader.refusal.bytes == 1);
+        assert(reader.refusal.actual[0] == status && !strcmp(reader.refusal.expected, "0x00"));
     }
+    setup(); m.layout_case = 33;
+    assert(chiron_f12_validate(&reader, &functions, &result) == CHIRON_DSX_UNVERIFIED_LAYOUT);
+    assert(!strcmp(reader.refusal.field, "F01.Control0.configured/sleep"));
+    assert(reader.refusal.address == functions.f01.control && reader.refusal.actual[0] == 0);
+    assert(!strcmp(reader.refusal.expected, "(value & 0x83) == 0x80") && !m.writes);
+    m.sensor_status = 0x80;
+    assert(chiron_f12_validate(&reader, &functions, &result) == CHIRON_DSX_UNVERIFIED_LAYOUT);
+    assert(!strcmp(reader.refusal.field, "F01.Data0.status")); /* First failed check wins. */
+    setup(); m.layout_case = 28;
+    assert(chiron_f12_validate(&reader, &functions, &result) == CHIRON_DSX_UNVERIFIED_LAYOUT);
+    assert(!strcmp(reader.refusal.field, "F12.Control28.report_enable"));
+    assert(reader.refusal.address == functions.f12.control + 4 && reader.refusal.actual[0] == 0x1f);
+    assert(!strcmp(reader.refusal.expected, "0xff") && !m.writes);
+    setup();
+    assert(chiron_f12_validate(&reader, &functions, &result) == 0 && !reader.refusal.field);
     setup(); reader.flip = 4;
     assert(chiron_f12_validate(&reader, &functions, &result) < 0);
 }

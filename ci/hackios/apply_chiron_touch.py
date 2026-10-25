@@ -74,6 +74,7 @@ def _overlay(root, prefix, manifest):
         "hardware_touch_available": False,
         "native_i2c_transport_implemented": True,
         "f12_layout_validator_implemented": True,
+        "f12_first_refusal_report_implemented": True,
         "native_i2c_hardware_enabled": False,
         "board_probe_implemented": True,
         "loader_overlay_required_for_native": True,

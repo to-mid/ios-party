@@ -459,6 +459,24 @@ chiron_touch_pinmux_probe_stop(void)
 }
 
 static void
+chiron_layout_refusal_report(void)
+{
+    const struct chiron_dsx_functions *f = &chiron_touch.functions;
+    const struct chiron_f12_refusal *r = &chiron_native.reader.refusal;
+    printf("chiron touch: PDT discovered=%u F01 query=%x control=%x data=%x "
+        "F12 query=%x control=%x data=%x\n", chiron_touch.discovered,
+        (unsigned)f->f01.query, (unsigned)f->f01.control, (unsigned)f->f01.data,
+        (unsigned)f->f12.query, (unsigned)f->f12.control, (unsigned)f->f12.data);
+    if (!r->field)
+        return;
+    printf("chiron touch: F12 refusal field=%s address=%x actual=",
+        r->field, (unsigned)r->address);
+    for (unsigned i = 0; i < r->bytes; i++)
+        printf("%02x%s", (unsigned)r->actual[i], i + 1 == r->bytes ? "" : " ");
+    printf(" expected=%s; no sensor configuration writes\n", r->expected);
+}
+
+static void
 chiron_touch_thread(void *parameter, wait_result_t result)
 {
     int status;
@@ -486,6 +504,7 @@ chiron_touch_thread(void *parameter, wait_result_t result)
     chiron_dsx_init(&chiron_touch, &bus, chiron_post, NULL);
     status = chiron_dsx_start(&chiron_touch);
     if (status) {
+        chiron_layout_refusal_report();
         printf("chiron touch: discovery/layout refused (%d)\n", status);
         thread_terminate(current_thread());
         return;
@@ -495,6 +514,7 @@ chiron_touch_thread(void *parameter, wait_result_t result)
         /* Thread context is required by redwood_touch_post's mutex/queue. */
         status = chiron_dsx_poll(&chiron_touch);
         if (status) {
+            chiron_layout_refusal_report();
             chiron_probe_report();
             printf("chiron touch: report failed (%d), all fingers released; stopped\n", status);
             thread_terminate(current_thread());

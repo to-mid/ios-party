@@ -42,7 +42,9 @@ chiron_native_bind(struct chiron_native *native, const struct chiron_qup_io *io,
     int result = chiron_qup_open(&native->qup, io);
     if (result)
         return result;
-    native->reader = (struct chiron_f12_reader){native, cn_absolute_read, flip};
+    native->reader = (struct chiron_f12_reader){
+        .context = native, .read = cn_absolute_read, .flip = flip
+    };
     *bus = (struct chiron_dsx_bus){native, cn_select, cn_read, cn_validate};
     return 0;
 }
