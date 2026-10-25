@@ -21,6 +21,41 @@ _Static_assert(sizeof(struct chiron_reset_vreg_status) == 20, "VREG status ABI")
 _Static_assert(offsetof(struct chiron_reset_vreg, get_status) == 48, "VREG status slot");
 _Static_assert(offsetof(struct chiron_reset_vreg, set_level_uv) == 56, "VREG UV slot");
 
+struct chiron_reset_spmi {
+    uint64_t revision;
+    uint32_t (EFIAPI *read)(struct chiron_reset_spmi *, uint32_t, uint32_t,
+        uint32_t, uint8_t *, uint32_t, uint32_t *);
+};
+_Static_assert(offsetof(struct chiron_reset_spmi, read) == 8, "SPMI read slot");
+
+static int
+chiron_reset_controls(void)
+{
+    static const efi_guid guid = {
+        0xfa5f306b, 0xf47d, 0x4ac4, {0xa4, 0x7d, 0x88, 0x2f, 0x82, 4, 0xec, 0x30}
+    };
+    /* Direct reads from Android with working touch, 2026-10-25.
+     * These are register encodings, not externally measured pin voltages. */
+    static const uint32_t registers[] = {0x4540, 0x4d40};
+    static const uint32_t expected[] = {0x0738, 0x0758};
+    struct chiron_reset_spmi *spmi = NULL;
+    efi_status status = BS->locate_protocol(&guid, NULL, (void **)&spmi);
+    if (EFI_ERROR(status) || !spmi || spmi->revision != 0x10000 || !spmi->read)
+        return 0;
+    for (unsigned i = 0; i < 2; i++) {
+        uint8_t data[2] = {0};
+        uint32_t count = 0;
+        uint32_t result = spmi->read(spmi, 1, 0, registers[i], data, 2, &count);
+        uint32_t value = data[0] | (uint32_t)data[1] << 8;
+        print("chiron reset: SID1 reg=%x read=%d bytes=%d control=%x expected=%x\n",
+            (uint64_t)registers[i], (uint64_t)result, (uint64_t)count,
+            (uint64_t)value, (uint64_t)expected[i]);
+        if (result || count != 2 || value != expected[i])
+            return 0;
+    }
+    return 1;
+}
+
 static int
 chiron_inspect_vreg_abi(void)
 {
@@ -122,8 +157,9 @@ chiron_reset_requested(const char *args)
 static int
 chiron_reset_power(struct chiron_reset_vreg *vreg, uint32_t l6_uv)
 {
-    /* LDO enum starts at zero. The original reset probe expects L6=1.808V;
-     * the measured runtime DT's separate L6 experiment requests 1.800V.
+    /* LDO enum starts at zero. Retained levels must match the working Android
+     * register profile, in addition to enabled/OK and GPIO50. Logical 1.8V
+     * votes must not be compared directly to these firmware readbacks.
      * disp_vddts_vreg is active-high GPIO50, NORTH tile, 4 ms startup. */
     static const uint32_t ids[] = {5, 13};
     const uint32_t volts[] = {l6_uv, 1880000};
@@ -142,7 +178,31 @@ chiron_reset_power(struct chiron_reset_vreg *vreg, uint32_t l6_uv)
     }
     uint32_t cfg = chiron_reset_read(0x03932000), io = chiron_reset_read(0x03932004);
     print("chiron reset: GPIO50 cfg=%x io=%x\n", (uint64_t)cfg, (uint64_t)io);
-    return ready && (cfg & 0x23cu) == 0x200 && (io & 3u) == 3;
+    return ready && (cfg & 0x23cu) == 0x200 && (io & 3u) == 3 &&
+        (CHIRON_TOUCH_L6_PREPARE || chiron_reset_controls());
+}
+
+static int
+chiron_reset_power_probe(const char *args, uint64_t boot)
+{
+    static const efi_guid guid = {
+        0x22d38d3d, 0xe8b6, 0x4f8f, {0x9c, 0x26, 0xbc, 0xeb, 7, 0xd6, 0xcb, 0x68}
+    };
+    struct chiron_reset_vreg *vreg = NULL;
+    if (CHIRON_TOUCH_L6_PREPARE || chiron_reset_requested(args) != 1 ||
+        chiron_reset_option(args, "chiron_touch_l6=", sizeof("chiron_touch_l6=1") - 1) != 0 ||
+        chiron_touch_loader_owner(args, boot, boot) != CHIRON_TOUCH_DIRECT_BOOT_CPU)
+        return 0;
+    efi_status status = BS->locate_protocol(&guid, NULL, (void **)&vreg);
+    if (EFI_ERROR(status) || !vreg || vreg->revision != 0x10005 ||
+        !vreg->get_level || !vreg->get_status)
+        return 0;
+    int ready = chiron_reset_power(vreg, 1848000);
+    uint32_t cfg = chiron_reset_read(0x03d59000), io = chiron_reset_read(0x03d59004);
+    ready = ready && (cfg & 0x23cu) == 0x200 && ((io & 3u) == 0 || (io & 3u) == 3);
+    print("CHIRON RESET POWER: ready=%d reset_cfg=%x reset_io=%x; reset unchanged\n",
+        (uint64_t)ready, (uint64_t)cfg, (uint64_t)io);
+    return ready;
 }
 
 static int
@@ -250,7 +310,7 @@ chiron_reset_prepare(const char *args, uint64_t boot, uint64_t kernel)
     struct chiron_reset_vreg *vreg = NULL;
     unsigned changed = 0;
     int l6 = chiron_reset_option(args, "chiron_touch_l6=", sizeof("chiron_touch_l6=1") - 1);
-    uint32_t l6_uv = l6 == 1 ? 1800000 : 1808000;
+    uint32_t l6_uv = l6 == 1 ? 1800000 : 1848000;
     if (chiron_reset_requested(args) != 1 ||
         l6 != CHIRON_TOUCH_L6_PREPARE ||
         chiron_touch_loader_owner(args, boot, kernel) != CHIRON_TOUCH_DIRECT_BOOT_CPU)

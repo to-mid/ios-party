@@ -49,7 +49,8 @@ static int owner = 1, reads, writes, stalls, queries, bad_rail = -1;
 static int bad_status, short_delay, stall_error, lose_owner, lose_power, stuck;
 static int locate_error, change_gpio;
 static int l6_build, voltage_writes, set_error, set_ignored, after_set_owner_loss, revert;
-static uint32_t l6_uv = 1808000;
+static uint32_t l6_uv = 1848000;
+static int control_bad, control_error, control_short, control_locate_error;
 #define CHIRON_TOUCH_L6_PREPARE l6_build
 static uint32_t gpio50_cfg = 0x203, gpio50_io = 3, cfg = 0x203, io;
 static uint64_t ticks, model_frequency = 19200000, delays[4];
@@ -100,6 +101,18 @@ static void model_write(uint64_t address, uint32_t value) {
 }
 #include "reset.inc"
 static struct chiron_reset_vreg vreg;
+static struct chiron_reset_spmi spmi;
+static uint32_t read_control(struct chiron_reset_spmi *self, uint32_t slave,
+    uint32_t priority, uint32_t reg, uint8_t *data, uint32_t length, uint32_t *count) {
+    assert(self == &spmi && slave == 1 && !priority && length == 2);
+    assert(reg == 0x4540 || reg == 0x4d40);
+    uint32_t value = reg == 0x4540 ? 0x738 : 0x758;
+    if ((control_bad == 1 && reg == 0x4540) || (control_bad == 2 && reg == 0x4d40))
+        value = 0x708;
+    data[0] = value; data[1] = value >> 8;
+    *count = control_short ? 1 : 2;
+    return control_error ? 12 : 0;
+}
 static efi_status get_level(uint32_t device, uint32_t id, uint32_t *uv) {
     assert(device == 0 && (id == 5 || id == 13));
     *uv = id == 5 ? l6_uv : 1880000;
@@ -114,7 +127,12 @@ static efi_status get_status(uint32_t device, uint32_t id, struct chiron_reset_v
     return 0;
 }
 static efi_status locate(const efi_guid *guid, void *registration, void **result) {
-    assert(guid->a == 0x22d38d3d && !registration);
+    assert(!registration);
+    if (guid->a == 0xfa5f306b) {
+        *result = &spmi;
+        return control_locate_error ? UINT64_C(0x800000000000000e) : 0;
+    }
+    assert(guid->a == 0x22d38d3d);
     *result = &vreg;
     return locate_error ? UINT64_C(0x800000000000000e) : 0;
 }
@@ -148,6 +166,7 @@ int main(int argc, char **argv) {
     SCREEN.width = 1080; SCREEN.height = 2160; SCREEN.stride = 4320;
     vreg.revision = 0x10005; vreg.get_level = get_level; vreg.get_status = get_status;
     vreg.set_level_uv = set_level_uv;
+    spmi.revision = 0x10000; spmi.read = read_control;
     if (test >= 42 && test <= 45) {
         vreg.get_level = (efi_status (*)(uint32_t, uint32_t, uint32_t *))(uintptr_t)0x1021a8;
         vreg.get_status = (efi_status (*)(uint32_t, uint32_t,
@@ -208,7 +227,7 @@ int main(int argc, char **argv) {
     if (test == 39) vreg.set_level_uv = NULL;
     if (test == 40) l6_uv = 1000000;
     if (test == 41) l6_uv = 1900000;
-    if (test >= 46) {
+    if (test >= 46 && test < 54) {
         if (test == 50) services.raise_tpl = NULL;
         if (test == 51) services.restore_tpl = NULL;
         if (test == 52) current_tpl = 16;
@@ -230,8 +249,22 @@ int main(int argc, char **argv) {
         if (test == 49) assert(!reads && !queries && !stalls);
         return 0;
     }
+    if (test >= 54) {
+        args = "cpus=1 -v chiron_touch_pinmux_probe=1 chiron_touch_reset=1";
+        l6_build = 0; l6_uv = 1848000;
+        if (test == 54) control_bad = 1;
+        if (test == 55) control_bad = 2;
+        if (test == 56) control_error = 1;
+        if (test == 57) control_short = 1;
+        if (test == 58) spmi.revision--;
+        if (test == 59) control_locate_error = 1;
+        if (test == 60) expected = 1;
+        if (test == 61) { expected = 1; io = 3; }
+        assert(chiron_reset_power_probe(args, 0) == expected);
+        assert(!writes && !voltage_writes && !stalls);
+    }
     assert(chiron_reset_prepare(args, 0, 0) == expected);
-    assert(writes == (test == 0 || test == 16 || test == 22 || test == 23));
+    assert(writes == (test == 0 || test == 16 || test == 22 || test == 23 || test == 60));
     assert(voltage_writes == (test == 22 || (test >= 29 && test <= 32) || test == 35));
     assert(current_tpl == 4);
     assert(cleaned_rows == (voltage_writes ? 192u : 0u));
@@ -262,7 +295,7 @@ int main(int argc, char **argv) {
             raise AssertionError(result.stderr)
 
     def test_only_reset_output_changes_after_power_and_delays_pass(self):
-        for case in range(54):
+        for case in range(62):
             with self.subTest(case=case):
                 result = subprocess.run([str(self.program), str(case)], text=True, capture_output=True)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

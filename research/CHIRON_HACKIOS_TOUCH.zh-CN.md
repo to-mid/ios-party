@@ -722,3 +722,29 @@ chnls=`0x08400000`、obsrvr=`0x09400000`、cnfg=`0x0800a000`、EE=0。
 同轮还通过原 ReadLong 仅读取已截获的 `SID1:4540` 两字节控制值，
 区别“配置目标电压”与 GetLevel 在 enabled/ready 时读取的 valid 电压；
 不根据两者差异擅自改变供电判定或发写事务。
+
+### Android 健康配置对照与停止不必要的 L6 写入
+
+正确完整 root-shell 引用后取得 Android 原始配置：
+`out/chiron-android-l6-control-20261025.json` 为 `4540:38/4541:07`，
+`out/chiron-android-l14-control-20261025.json` 为 `4d40:58/4d41:07`。
+读取前后 debugfs address/count 均恢复为 `0x0`/`1`，没有 PMIC 写入。
+框架报告逻辑 1800mV，不能直接替换这些硬件编码；没有实测引脚电压，
+也未据此认定具体补偿或校准机制。
+
+运行 `40172181372` 完成静态绑定及真机 USB 观察，日志
+`out/chiron-l6-capture-control-usb-20261025.log` 显示 UEFI 控制值同为 `0738`；
+SPMI core=`08000000`、EE=0、channel=115、mapping=`14500`、owner=4。
+归属不匹配，未访问写 aperture 或发写事务。原 SetLevelUv 的计算请求为
+`SID1:4540 <- 08 07`，会改动这组已与正常 Android 相同的配置。
+电压计算在影子拒绝时正常返回，阻塞位于原 SPMI 写路径；归属不匹配支持
+其无法直接写入的解释，未定位固件内部具体停滞指令。
+
+实际修复回到 `touch-reset-probe`，不再走 L6 改压实验：
+保留已测 L6/L14 固件读回 `1848000`/`1880000`、enabled/OK、GPIO50、
+reset mux/时序和 CPU 所有权检查，并增加 SID1 控制值严格匹配
+Android 健康配置 `0738`/`0758`。未知或短读/失败仍拒绝。
+第一阶段在 USB 启动后只验证供电并输出 preflight，不释放 reset；
+GPIO89 释放仍留在原 kernel-run 前检，避免扩大固件触摸定时器可运行的窗口。
+不调用 PMIC 写 API，不改 arbiter 归属，不修改电压容差窗口或强制 QUP 就绪。
+本轮构建和第一阶段实机结果待追加，触摸事件尚未验证。

@@ -167,6 +167,13 @@ def loader_overlay(source, reset_prepare=False, l6_prepare=False, l6_abi=False,
                 '\t\tprint("CHIRON RESET PROBE: preflight failed; kernel not started\\n");\n'
                 "\t\treturn 0;\n\t}\n"
                 "\tuint64_t ranges[3] = { 0, plat->io_base, plat->io_size };")
+        if not l6_prepare:
+            replace('\t\tflush_log();\n\t\tusb_command_loop();',
+                    '\t\tint power_ready = chiron_reset_power_probe(pi.cmdline,\n'
+                    '\t\t    READ_SYSREG(MPIDR_EL1) & 0xff00ffffffULL);\n'
+                    '\t\tprint("CHIRON RESET POWER: preflight=%d; USB log available\\n",\n'
+                    '\t\t    (uint64_t)power_ready);\n'
+                    '\t\tflush_log();\n\t\tusb_command_loop();')
     if l6_prepare:
         replace('\tif (have_payload && pi.usb_mode) {',
                 '\tif (have_payload) {\n'
@@ -254,6 +261,8 @@ def loader_overlay(source, reset_prepare=False, l6_prepare=False, l6_abi=False,
             "board_probe_implemented": True, "photo_probe_boot_arg": "chiron_touch_probe=1",
             "clock_probe_boot_arg": "chiron_touch_clock_probe=1",
             "reset_prepare_implemented": reset_prepare,
+            "reset_power_probe_after_usb_start": reset_prepare and not l6_prepare,
+            "reset_retained_android_profile": reset_prepare and not l6_prepare,
             "reset_probe_boot_arg": "chiron_touch_reset=1" if reset_prepare else None,
             "reset_power_policy": ("L6-target-then-L6-L14-GPIO50-preflight" if l6_prepare else
                                    "read-only-L6-L14-GPIO50-preflight" if reset_prepare else None),

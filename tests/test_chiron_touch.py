@@ -469,6 +469,14 @@ class LoaderHandoffTests(unittest.TestCase):
                 self.assertLess(generated.index("if (!chiron_l6_before_usb(pi.cmdline,"),
                                 generated.index("if (have_payload && pi.usb_mode)"))
                 self.assertIn("!chiron_reset_prepare(ba->commandLine,", generated)
+            if reset and not l6:
+                generated = (source / "xnuloader/loader.c").read_text()
+                self.assertTrue(report["reset_power_probe_after_usb_start"])
+                self.assertTrue(report["reset_retained_android_profile"])
+                self.assertLess(generated.index('if (!usb_start())'),
+                                generated.index("int power_ready ="))
+                self.assertLess(generated.index("int power_ready ="),
+                                generated.index("\t\tusb_command_loop();"))
             if abi:
                 generated = (source / "xnuloader/loader.c").read_text()
                 self.assertTrue(report["kernel_start_disabled"])
