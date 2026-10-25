@@ -40,6 +40,8 @@ class ResetTests(unittest.TestCase):
 typedef uint64_t efi_status;
 typedef struct { uint32_t a; uint16_t b, c; uint8_t d[8]; } efi_guid;
 static struct {
+    uint64_t (*raise_tpl)(uint64_t);
+    void (*restore_tpl)(uint64_t);
     efi_status (*stall)(uint64_t);
     efi_status (*locate_protocol)(const efi_guid *, void *, void **);
 } services, *BS = &services;
@@ -57,6 +59,19 @@ static struct {
     uint32_t width, height, stride;
 } SCREEN;
 static unsigned cleaned_rows;
+static uint64_t current_tpl = 4;
+static uint64_t raise_tpl(uint64_t next) {
+    assert(next >= current_tpl && (next == 8 || next == 31));
+    uint64_t old = current_tpl;
+    current_tpl = next;
+    return old;
+}
+static void restore_tpl(uint64_t next) {
+    assert(next <= current_tpl);
+    if (current_tpl == 8 && voltage_writes)
+        assert(framebuffer[2160 * 1080 - 1] == 0x0000ff00);
+    current_tpl = next;
+}
 static void clean_dcache(uint64_t start, uint64_t end) {
     assert(start >= SCREEN.base && end <= SCREEN.base + sizeof(framebuffer));
     assert(end - start == 64 * 4);
@@ -118,6 +133,7 @@ static efi_status set_level_uv(uint32_t device, uint32_t id, uint32_t uv) {
     assert(l6_uv == 1848000 && io == 0 && cfg == 0x203 && owner == 1);
     assert(gpio50_io == 3 && !stalls && !voltage_writes);
     assert(cleaned_rows == 64);
+    assert(current_tpl == 8);
     assert(framebuffer[2160 * 1080 - 1] == 0x00ff0000);
     voltage_writes++;
     if (!set_ignored) l6_uv = uv;
@@ -127,6 +143,7 @@ int main(int argc, char **argv) {
     assert(argc == 2);
     int test = atoi(argv[1]), expected = 0;
     services.stall = stall; services.locate_protocol = locate;
+    services.raise_tpl = raise_tpl; services.restore_tpl = restore_tpl;
     SCREEN.base = (uintptr_t)framebuffer;
     SCREEN.width = 1080; SCREEN.height = 2160; SCREEN.stride = 4320;
     vreg.revision = 0x10005; vreg.get_level = get_level; vreg.get_status = get_status;
@@ -192,29 +209,37 @@ int main(int argc, char **argv) {
     if (test == 40) l6_uv = 1000000;
     if (test == 41) l6_uv = 1900000;
     if (test >= 46) {
+        if (test == 50) services.raise_tpl = NULL;
+        if (test == 51) services.restore_tpl = NULL;
+        if (test == 52) current_tpl = 16;
+        if (test == 53) current_tpl = 8;
         if (test == 48) { set_error = 1; set_ignored = 1; }
         if (test == 49) args = "chiron_touch_reset=1";
-        assert(chiron_l6_before_usb(args, 0) == (test == 46 || test == 47));
+        int early_ready = test == 46 || test == 47 || test == 53;
+        int expected_writes = test <= 48 || test == 53;
+        assert(chiron_l6_before_usb(args, 0) == early_ready);
         assert(!writes && io == 0);
-        assert(voltage_writes == (test == 49 ? 0 : 1));
-        if (test == 46) assert(chiron_reset_prepare(args, 0, 0) == 1);
+        assert(voltage_writes == expected_writes);
+        if (test == 46 || test == 53) assert(chiron_reset_prepare(args, 0, 0) == 1);
         if (test == 47) l6_uv = 1848000;
         if (test == 47 || test == 48)
             assert(chiron_reset_prepare(args, 0, 0) == 0);
-        assert(voltage_writes == (test == 49 ? 0 : 1));
-        assert(writes == (test == 46));
+        assert(voltage_writes == expected_writes);
+        assert(writes == (test == 46 || test == 53));
+        assert(current_tpl == (test == 52 ? 16u : test == 53 ? 8u : 4u));
         if (test == 49) assert(!reads && !queries && !stalls);
         return 0;
     }
     assert(chiron_reset_prepare(args, 0, 0) == expected);
     assert(writes == (test == 0 || test == 16 || test == 22 || test == 23));
     assert(voltage_writes == (test == 22 || (test >= 29 && test <= 32) || test == 35));
-    assert(cleaned_rows == (voltage_writes ? 128u : 0u));
+    assert(current_tpl == 4);
+    assert(cleaned_rows == (voltage_writes ? 192u : 0u));
     if (voltage_writes) {
         for (unsigned y = 0; y < 2160; y++)
             for (unsigned x = 0; x < 1080; x++)
                 assert(framebuffer[y * 1080 + x] ==
-                    (y >= 2160 - 64 && x >= 1080 - 64 ? 0x0000ff00u : 0u));
+                    (y >= 2160 - 64 && x >= 1080 - 64 ? 0x000000ffu : 0u));
     }
     if (expected) {
         assert(io == 3 && cfg == 0x203 && delays[stalls - 1] == 200000);
@@ -237,7 +262,7 @@ int main(int argc, char **argv) {
             raise AssertionError(result.stderr)
 
     def test_only_reset_output_changes_after_power_and_delays_pass(self):
-        for case in range(50):
+        for case in range(54):
             with self.subTest(case=case):
                 result = subprocess.run([str(self.program), str(case)], text=True, capture_output=True)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

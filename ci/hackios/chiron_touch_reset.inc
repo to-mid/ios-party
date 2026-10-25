@@ -79,7 +79,7 @@ chiron_reset_barrier(void)
 }
 
 static int
-chiron_l6_call_marker(int returned)
+chiron_l6_call_marker(int stage)
 {
     if (!SCREEN.base || SCREEN.width != 1080 || SCREEN.height != 2160 ||
         SCREEN.stride != 4320)
@@ -90,7 +90,7 @@ chiron_l6_call_marker(int returned)
             (SCREEN.width - 64) * 4;
         volatile uint32_t *pixels = (volatile uint32_t *)(uintptr_t)start;
         for (unsigned x = 0; x < 64; x++)
-            pixels[x] = returned ? 0x0000ff00 : 0x00ff0000;
+            pixels[x] = stage == 2 ? 0x000000ff : stage == 1 ? 0x0000ff00 : 0x00ff0000;
         chiron_reset_barrier();
         clean_dcache(start, start + 64 * 4);
     }
@@ -179,19 +179,35 @@ chiron_reset_prepare_l6(struct chiron_reset_vreg *vreg, const char *args,
     if ((cfg & 0x23cu) != 0x200 || (io & 3u) != 0 || !vreg->set_level_uv ||
         chiron_touch_loader_owner(args, boot, kernel) != CHIRON_TOUCH_DIRECT_BOOT_CPU)
         return 0;
+    uint64_t (EFIAPI *raise_tpl)(uint64_t) =
+        (uint64_t (EFIAPI *)(uint64_t))BS->raise_tpl;
+    void (EFIAPI *restore_tpl)(uint64_t) =
+        (void (EFIAPI *)(uint64_t))BS->restore_tpl;
+    if (!raise_tpl || !restore_tpl)
+        return 0;
+    uint64_t previous_tpl = raise_tpl(31);
+    restore_tpl(previous_tpl);
+    if (previous_tpl != 4 && previous_tpl != 8)
+        return 0;
     uint32_t current = 0;
     if (EFI_ERROR(vreg->get_level(0, 5, &current)) || current != uv ||
         !chiron_reset_power(vreg, uv) || chiron_reset_read(0x03d59000) != cfg ||
         chiron_reset_read(0x03d59004) != io ||
         chiron_touch_loader_owner(args, boot, kernel) != CHIRON_TOUCH_DIRECT_BOOT_CPU)
         return 0;
-    print("CHIRON L6 MARKER: bottom-right RED=calling GREEN=returned\n");
+    print("CHIRON L6 TPL: current=%d outer=8; BLUE=restore returned\n", previous_tpl);
+    print("CHIRON L6 MARKER: bottom-right RED=calling GREEN=returned BLUE=restored\n");
     print("CHIRON L6 TRACE: calling SetLevelUv L6=1800000\n");
     if (!chiron_l6_call_marker(0))
         return 0;
+    /* The reference SPMI wrapper uses TPL_CALLBACK. Defer its final lowering
+     * until the API-return marker is visible; never call PMIC at HIGH_LEVEL. */
+    uint64_t call_tpl = raise_tpl(8);
     chiron_l6_set_attempted = 1;
     status = vreg->set_level_uv(0, 5, 1800000);
-    if (!chiron_l6_call_marker(1))
+    int marked = chiron_l6_call_marker(1);
+    restore_tpl(call_tpl);
+    if (!marked || !chiron_l6_call_marker(2))
         return 0;
     print("CHIRON L6 PROBE: changed=1 set_status=%x; no retry or voltage rollback\n",
         (uint64_t)status);

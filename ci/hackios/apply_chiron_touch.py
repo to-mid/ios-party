@@ -246,6 +246,7 @@ def loader_overlay(source, reset_prepare=False, l6_prepare=False, l6_abi=False):
             "l6_screen_trace": l6_prepare,
             "l6_direct_return_marker": l6_prepare,
             "l6_before_usb": l6_prepare,
+            "l6_tpl_callback_scope": l6_prepare,
             "l6_abi_implemented": l6_abi,
             "kernel_start_disabled": l6_abi,
             "power_write_policy": "LDO6-only-1848000-to-1800000-uV-with-reset-low" if l6_prepare else None,
