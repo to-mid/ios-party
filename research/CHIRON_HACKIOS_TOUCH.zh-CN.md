@@ -697,3 +697,17 @@ revision 分别为 `10005`/`10000`。前检拒绝于 profile 或 veneer/cache RA
 下一轮在已分配、非 Runtime、无 RO/RP 的 RAM 边界内，用 AT S1E1W/PAR_EL1
 只译址验证缓存指针首尾页的 EL1 写权限及恒等映射，保留并恢复 PAR_EL1；
 失败仍拒绝。不改页表、不取消保护、不试写以检测权限。
+
+运行 `40165286815` 已编译、链接并打包，静态绑定全部通过，镜像 SHA-256
+`f35d0179262937a3e435620d97a6f547ebfa3f913c53b23d7c7abf9b9e953445`。
+真机 USB 日志 `out/chiron-l6-capture-translation-usb-20261025.log`：
+MMU write PAR=`ff000000ffe43b80`，CPACR=`300000`，缓存实例一致；
+原 SetLevelUv 返回 `8000000000000007`，restored=1/calls=1/kind=2，
+SPMI slave=1/address=`4540`/bytes=2/data_le=`708`，unchanged=1/complete=1。
+这证明影子拒绝底层事务时，原电压计算可到达写请求并返回；原指针/TPL 恢复，
+L6/L14/reset 前后检查不变。没有执行物理调压，不授予触摸或内核运行资格。
+阻塞范围缩至原 SPMI 写实现；下一轮仅读取其固定版本的通道映射和归属，
+归属不匹配时不访问写通道 aperture；不修改 arbiter 或发写事务。
+Android 只读对照 `out/chiron-android-touch-power-20261025.log` 报告
+L6/L14 均为 1800mV，这是框架报告，不是引脚实测。regmap 访问被权限拒绝，
+没有修改 SELinux 或其它设置。

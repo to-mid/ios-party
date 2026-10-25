@@ -47,7 +47,7 @@ chiron_capture_translate_write(uint64_t address)
 static int
 chiron_capture_ram(uint64_t address, uint64_t bytes, int writable)
 {
-    if (!bytes || address > UINT64_MAX - bytes)
+    if (!address || !bytes || address > UINT64_MAX - bytes)
         return 0;
     for (uint64_t off = 0; off < chiron_capture_map_size;
             off += chiron_capture_map_stride) {
@@ -138,6 +138,66 @@ chiron_capture_read_debug(struct chiron_capture_spmi *self, uint32_t slave,
 {
     (void)self; (void)data;
     return chiron_capture_reject(5, slave, priority, address, NULL, length);
+}
+
+static void
+chiron_capture_channel(struct chiron_capture_spmi *spmi)
+{
+    uint64_t write = (uintptr_t)spmi->write;
+    uint64_t base = write >= 0x14f8 ? write - 0x14f8 : 0;
+    if (!base || base > UINT64_MAX - 0x8000 ||
+        (uintptr_t)spmi->read != base + 0x1440 ||
+        (uintptr_t)spmi->rmw != base + 0x1590 ||
+        (uintptr_t)spmi->command != base + 0x1630 ||
+        !chiron_capture_ram(base + 0x75e0, 8, 0) ||
+        chiron_capture.calls != 1 || chiron_capture.kind != 2 ||
+        chiron_capture.slave != 1 || chiron_capture.address != 0x4540)
+        return;
+    /* Pinned SpmiDxe layout used by its 0x2b20 transaction path. */
+    uint64_t info = *(const volatile uint64_t *)(uintptr_t)(base + 0x75e0);
+    if (!chiron_capture_ram(info, 32, 0))
+        return;
+    uint32_t ee = *(const volatile uint8_t *)(uintptr_t)info;
+    uint32_t buses = *(const volatile uint8_t *)(uintptr_t)(info + 16);
+    uint64_t device = *(const volatile uint64_t *)(uintptr_t)(info + 24);
+    if (ee > 7 || buses != 1 || !chiron_capture_ram(device, 48, 0))
+        return;
+    uint64_t mmio = *(const volatile uint64_t *)(uintptr_t)device;
+    uint64_t lut = *(const volatile uint64_t *)(uintptr_t)(device + 16);
+    uint64_t map = *(const volatile uint64_t *)(uintptr_t)(device + 24);
+    uint64_t hw = *(const volatile uint64_t *)(uintptr_t)(device + 32);
+    if (mmio != 0x02000000 || !chiron_capture_ram(hw, 2, 0) ||
+        !chiron_capture_ram(lut, 512, 0))
+        return;
+    uint32_t channels = *(const volatile uint16_t *)(uintptr_t)hw;
+    if (!channels || channels > 512 || !chiron_capture_ram(map, channels * 2, 0))
+        return;
+    uint32_t channel = ((const volatile uint16_t *)(uintptr_t)lut)[0x45];
+    for (uint32_t n = 0; n < channels && channel < channels; n++) {
+        uint32_t entry = ((const volatile uint16_t *)(uintptr_t)map)[channel];
+        if ((entry & 31) != 1) {
+            channel = entry >> 5;
+            continue;
+        }
+        /* Linux's v2 arbiter uses cnfg=core+0xf000, PPID at +0x800,
+         * ownership at +0x700. Read ownership before any write aperture. */
+        uint32_t mapping = chiron_reset_read(mmio + 0xf800 + channel * 4);
+        uint32_t owner = chiron_reset_read(mmio + 0xf700 + channel * 4) & 7;
+        print("CHIRON L6 CHANNEL: core=%x ee=%d channel=%d mapping=%x owner=%d\n",
+            mmio, (uint64_t)ee, (uint64_t)channel, (uint64_t)mapping, (uint64_t)owner);
+        if (((mapping >> 16) & 15) != 1 || ((mapping >> 8) & 255) != 0x45)
+            return;
+        if (owner != ee) {
+            print("CHIRON L6 CHANNEL: owner mismatch; write aperture untouched\n");
+            return;
+        }
+        uint64_t offset = (uint64_t)channel * 0x8000 + ee * 0x1000;
+        uint32_t read_status = chiron_reset_read(mmio + 0x1400008 + offset);
+        uint32_t write_status = chiron_reset_read(mmio + 0x400008 + offset);
+        print("CHIRON L6 CHANNEL: read_status=%x write_status=%x; no MMIO writes\n",
+            (uint64_t)read_status, (uint64_t)write_status);
+        return;
+    }
 }
 
 static int
@@ -265,5 +325,7 @@ chiron_capture_l6(const char *args, uint64_t boot)
     int unchanged = *cached == spmi && chiron_reset_power(vreg, 1848000) &&
         chiron_reset_read(0x03d59000) == cfg && chiron_reset_read(0x03d59004) == io;
     print("CHIRON L6 CAPTURE: unchanged=%d; no kernel start\n", (uint64_t)unchanged);
+    if (unchanged)
+        chiron_capture_channel(spmi);
     return unchanged && EFI_ERROR(status) && chiron_capture.calls == 1;
 }

@@ -56,6 +56,7 @@ struct chiron_reset_vreg {
 };
 static uint8_t image[0x33000] __attribute__((aligned(8)));
 static unsigned scenario, owner = 1, tpl = 4, physical_calls, calculator_calls, power_calls;
+static unsigned channel_reads, aperture_reads;
 static void print(const char *format, ...) { (void)format; }
 static uint32_t chiron_touch_loader_owner(const char *args, uint64_t b, uint64_t k) {
     assert(!b && !k && args); return owner;
@@ -64,6 +65,16 @@ static int chiron_reset_power(struct chiron_reset_vreg *vreg, uint32_t uv) {
     assert(vreg && uv == 1848000 && tpl <= 8); power_calls++; return scenario != 10;
 }
 static uint32_t chiron_reset_read(uint64_t address) {
+    if (address == 0x0200f804) {
+        channel_reads++; return scenario==25 ? 0 : 0x00014500;
+    }
+    if (address == 0x0200f704) {
+        channel_reads++; return scenario==23 ? 2 : 0;
+    }
+    if (address == 0x03408008 || address == 0x02408008) {
+        assert(scenario==24); channel_reads++; aperture_reads++;
+        return address==0x03408008 ? 1 : 0;
+    }
     assert(address == 0x03d59000 || address == 0x03d59004);
     return address == 0x03d59000 ? 0x203 : scenario == 11 ? 3 : 0;
 }
@@ -135,6 +146,27 @@ int main(int argc,char **argv) {
     original.revision=0x10000; original.write=physical_write;
     static const uint32_t words[] = { VENEER };
     memcpy(image+0x15aa0,words,sizeof(words));
+    if (scenario>=23) {
+        uint64_t info[4]={0}, device[6]={0};
+        uint16_t lut[256]={0}, map[2]={0,0x4001}, hw=2;
+        info[2]=1; info[3]=(uintptr_t)device;
+        device[0]=0x02000000; device[2]=(uintptr_t)lut;
+        device[3]=(uintptr_t)map; device[4]=(uintptr_t)&hw; lut[0x45]=1;
+        *(uint64_t *)(void *)(image+0x75e0)=(uintptr_t)info;
+        original.write=(chiron_capture_write_fn)(void *)(image+0x14f8);
+        original.read=(chiron_capture_read_fn)(void *)(image+0x1440);
+        original.rmw=(void *)(image+0x1590); original.command=(void *)(image+0x1630);
+        uint64_t size=sizeof(chiron_capture_map),key,stride; uint32_t version;
+        assert(!memory_map(&size,chiron_capture_map,&key,&stride,&version));
+        chiron_capture_map_size=size; chiron_capture_map_stride=stride;
+        chiron_capture.calls=1; chiron_capture.kind=2;
+        chiron_capture.slave=1; chiron_capture.address=0x4540;
+        chiron_capture_channel(&original);
+        assert(channel_reads==(scenario==24 ? 4u : 2u));
+        assert(aperture_reads==(scenario==24 ? 2u : 0u));
+        assert(!physical_calls && !calculator_calls);
+        return 0;
+    }
     if (scenario==12) image[0x15aa0]^=1;
     if (scenario==13) tpl=16;
     if (scenario==16) original.revision++;
@@ -163,7 +195,7 @@ int main(int argc,char **argv) {
                  str(folder / "host.c"), "-o", str(folder / "host")],
                 capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
-            for case in range(23):
+            for case in range(26):
                 with self.subTest(case=case):
                     result = subprocess.run([str(folder / "host"), str(case)],
                                             capture_output=True, text=True)
