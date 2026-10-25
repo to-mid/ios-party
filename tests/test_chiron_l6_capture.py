@@ -65,15 +65,15 @@ static int chiron_reset_power(struct chiron_reset_vreg *vreg, uint32_t uv) {
     assert(vreg && uv == 1848000 && tpl <= 8); power_calls++; return scenario != 10;
 }
 static uint32_t chiron_reset_read(uint64_t address) {
-    if (address == 0x0200f804) {
+    if (address == 0x0800f804) {
         channel_reads++; return scenario==25 ? 0 : 0x00014500;
     }
-    if (address == 0x0200f704) {
+    if (address == 0x0800a704) {
         channel_reads++; return scenario==23 ? 2 : 0;
     }
-    if (address == 0x03408008 || address == 0x02408008) {
+    if (address == 0x09408008 || address == 0x08408008) {
         assert(scenario==24); channel_reads++; aperture_reads++;
-        return address==0x03408008 ? 1 : 0;
+        return address==0x09408008 ? 1 : 0;
     }
     assert(address == 0x03d59000 || address == 0x03d59004);
     return address == 0x03d59000 ? 0x203 : scenario == 11 ? 3 : 0;
@@ -150,7 +150,7 @@ int main(int argc,char **argv) {
         uint64_t info[4]={0}, device[6]={0};
         uint16_t lut[256]={0}, map[2]={0,0x4001}, hw=2;
         info[2]=1; info[3]=(uintptr_t)device;
-        device[0]=0x02000000; device[2]=(uintptr_t)lut;
+        device[0]=0x08000000; device[2]=(uintptr_t)lut;
         device[3]=(uintptr_t)map; device[4]=(uintptr_t)&hw; lut[0x45]=1;
         *(uint64_t *)(void *)(image+0x75e0)=(uintptr_t)info;
         original.write=(chiron_capture_write_fn)(void *)(image+0x14f8);

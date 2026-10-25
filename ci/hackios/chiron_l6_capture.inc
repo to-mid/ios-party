@@ -166,7 +166,7 @@ chiron_capture_channel(struct chiron_capture_spmi *spmi)
     uint64_t lut = *(const volatile uint64_t *)(uintptr_t)(device + 16);
     uint64_t map = *(const volatile uint64_t *)(uintptr_t)(device + 24);
     uint64_t hw = *(const volatile uint64_t *)(uintptr_t)(device + 32);
-    if (mmio != 0x02000000 || !chiron_capture_ram(hw, 2, 0) ||
+    if (mmio != 0x08000000 || !chiron_capture_ram(hw, 2, 0) ||
         !chiron_capture_ram(lut, 512, 0))
         return;
     uint32_t channels = *(const volatile uint16_t *)(uintptr_t)hw;
@@ -179,10 +179,10 @@ chiron_capture_channel(struct chiron_capture_spmi *spmi)
             channel = entry >> 5;
             continue;
         }
-        /* Linux's v2 arbiter uses cnfg=core+0xf000, PPID at +0x800,
-         * ownership at +0x700. Read ownership before any write aperture. */
+        /* Pinned msm8998.dtsi: core=base+0xf000, cnfg=base+0xa000.
+         * PPID is core+0x800; ownership is cnfg+0x700. */
         uint32_t mapping = chiron_reset_read(mmio + 0xf800 + channel * 4);
-        uint32_t owner = chiron_reset_read(mmio + 0xf700 + channel * 4) & 7;
+        uint32_t owner = chiron_reset_read(mmio + 0xa700 + channel * 4) & 7;
         print("CHIRON L6 CHANNEL: core=%x ee=%d channel=%d mapping=%x owner=%d\n",
             mmio, (uint64_t)ee, (uint64_t)channel, (uint64_t)mapping, (uint64_t)owner);
         if (((mapping >> 16) & 15) != 1 || ((mapping >> 8) & 255) != 0x45)

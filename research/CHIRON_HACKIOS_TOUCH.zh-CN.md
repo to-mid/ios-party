@@ -711,3 +711,11 @@ L6/L14/reset 前后检查不变。没有执行物理调压，不授予触摸或�
 Android 只读对照 `out/chiron-android-touch-power-20261025.log` 报告
 L6/L14 均为 1800mV，这是框架报告，不是引脚实测。regmap 访问被权限拒绝，
 没有修改 SELinux 或其它设置。
+
+通道观察初版运行 `40168589181` 仅完成构建，未上机：交叉核对发现其
+`0x02000000` 基址假设不适用。固定内核同提交的
+`arch/arm/boot/dts/qcom/msm8998.dtsi:593` 明确给出 core=`0x0800f000`、
+chnls=`0x08400000`、obsrvr=`0x09400000`、cnfg=`0x0800a000`、EE=0。
+参考 SpmiDxe 的 PCD 常量 RVA `0x4cb4` 也为 `0x08000000`。
+已将观察代码改为该基址，归属表按 cnfg+0x700，PPID 表按 core+0x800；
+只在归属一致且 PPID 对上时读取只读状态，不写寄存器。
