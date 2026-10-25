@@ -21,6 +21,8 @@ class CaptureTests(unittest.TestCase):
         helper = (ROOT / "ci/hackios/chiron_l6_capture.inc").read_text()
         assert helper.count("return UINT64_MAX;") == 1
         helper = helper.replace("return UINT64_MAX;", "return model_translation(address);")
+        assert helper.count("(uintptr_t)spmi->read") == 1
+        helper = helper.replace("(uintptr_t)spmi->read", "((uintptr_t)image + 0x1440)")
         # Host functions do not live at the firmware RVAs. Keep all other code.
         for field, offset in (("get_level", "21a8"), ("get_status", "22ec"),
                               ("set_level_uv", "2118"), ("set_level", "219c")):
@@ -56,7 +58,7 @@ struct chiron_reset_vreg {
 };
 static uint8_t image[0x33000] __attribute__((aligned(8)));
 static unsigned scenario, owner = 1, tpl = 4, physical_calls, calculator_calls, power_calls;
-static unsigned channel_reads, aperture_reads;
+static unsigned channel_reads, aperture_reads, control_reads;
 static void print(const char *format, ...) { (void)format; }
 static uint32_t chiron_touch_loader_owner(const char *args, uint64_t b, uint64_t k) {
     assert(!b && !k && args); return owner;
@@ -121,6 +123,12 @@ static uint32_t physical_write(struct chiron_capture_spmi *self, uint32_t a,
                               uint32_t b,uint32_t c,uint8_t *d,uint32_t e) {
     (void)self;(void)a;(void)b;(void)c;(void)d;(void)e; physical_calls++; abort();
 }
+static uint32_t control_read(struct chiron_capture_spmi *self, uint32_t slave,
+                            uint32_t priority,uint32_t reg,uint8_t *data,
+                            uint32_t length,uint32_t *count) {
+    assert(self==&original && slave==1 && !priority && reg==0x4540 && length==2);
+    control_reads++; data[0]=8; data[1]=7; *count=2; return 0;
+}
 static efi_status calculate(uint32_t device, uint32_t rail, uint32_t uv) {
     assert(!device && rail == 5 && uv == 1800000 && tpl == 16);
     calculator_calls++;
@@ -154,7 +162,7 @@ int main(int argc,char **argv) {
         device[3]=(uintptr_t)map; device[4]=(uintptr_t)&hw; lut[0x45]=1;
         *(uint64_t *)(void *)(image+0x75e0)=(uintptr_t)info;
         original.write=(chiron_capture_write_fn)(void *)(image+0x14f8);
-        original.read=(chiron_capture_read_fn)(void *)(image+0x1440);
+        original.read=control_read;
         original.rmw=(void *)(image+0x1590); original.command=(void *)(image+0x1630);
         uint64_t size=sizeof(chiron_capture_map),key,stride; uint32_t version;
         assert(!memory_map(&size,chiron_capture_map,&key,&stride,&version));
@@ -164,6 +172,7 @@ int main(int argc,char **argv) {
         chiron_capture_channel(&original);
         assert(channel_reads==(scenario==24 ? 4u : 2u));
         assert(aperture_reads==(scenario==24 ? 2u : 0u));
+        assert(control_reads==1);
         assert(!physical_calls && !calculator_calls);
         return 0;
     }

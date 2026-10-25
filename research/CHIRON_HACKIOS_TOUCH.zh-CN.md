@@ -719,3 +719,6 @@ chnls=`0x08400000`、obsrvr=`0x09400000`、cnfg=`0x0800a000`、EE=0。
 参考 SpmiDxe 的 PCD 常量 RVA `0x4cb4` 也为 `0x08000000`。
 已将观察代码改为该基址，归属表按 cnfg+0x700，PPID 表按 core+0x800；
 只在归属一致且 PPID 对上时读取只读状态，不写寄存器。
+同轮还通过原 ReadLong 仅读取已截获的 `SID1:4540` 两字节控制值，
+区别“配置目标电压”与 GetLevel 在 enabled/ready 时读取的 valid 电压；
+不根据两者差异擅自改变供电判定或发写事务。

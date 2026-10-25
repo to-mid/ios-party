@@ -153,6 +153,13 @@ chiron_capture_channel(struct chiron_capture_spmi *spmi)
         chiron_capture.calls != 1 || chiron_capture.kind != 2 ||
         chiron_capture.slave != 1 || chiron_capture.address != 0x4540)
         return;
+    uint8_t control[2] = {0};
+    uint32_t count = 0;
+    uint32_t read_result = spmi->read(spmi, 1, 0, 0x4540, control, 2, &count);
+    print("CHIRON L6 CONTROL: read_result=%d bytes=%d requested_mv=%d raw=%x\n",
+        (uint64_t)read_result, (uint64_t)count,
+        (uint64_t)(control[0] | (uint32_t)control[1] << 8),
+        (uint64_t)(control[0] | (uint32_t)control[1] << 8));
     /* Pinned SpmiDxe layout used by its 0x2b20 transaction path. */
     uint64_t info = *(const volatile uint64_t *)(uintptr_t)(base + 0x75e0);
     if (!chiron_capture_ram(info, 32, 0))
