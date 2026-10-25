@@ -156,6 +156,8 @@ chiron_reset_wait(uint32_t us)
     return end >= start && end - start >= (uint64_t)us * frequency / 1000000;
 }
 
+static int chiron_l6_set_attempted;
+
 static int
 chiron_reset_prepare_l6(struct chiron_reset_vreg *vreg, const char *args,
     uint64_t boot, uint64_t kernel)
@@ -169,6 +171,8 @@ chiron_reset_prepare_l6(struct chiron_reset_vreg *vreg, const char *args,
         return 0;
     if (uv == 1800000)
         return 1;
+    if (chiron_l6_set_attempted)
+        return 0;
     /* Only the captured boot profile may change, with reset held low.
      * No enable/mode changes and no writes to another rail are permitted. */
     uint32_t cfg = chiron_reset_read(0x03d59000), io = chiron_reset_read(0x03d59004);
@@ -185,6 +189,7 @@ chiron_reset_prepare_l6(struct chiron_reset_vreg *vreg, const char *args,
     print("CHIRON L6 TRACE: calling SetLevelUv L6=1800000\n");
     if (!chiron_l6_call_marker(0))
         return 0;
+    chiron_l6_set_attempted = 1;
     status = vreg->set_level_uv(0, 5, 1800000);
     if (!chiron_l6_call_marker(1))
         return 0;
@@ -197,6 +202,27 @@ chiron_reset_prepare_l6(struct chiron_reset_vreg *vreg, const char *args,
         chiron_touch_loader_owner(args, boot, kernel) == CHIRON_TOUCH_DIRECT_BOOT_CPU;
     print("CHIRON L6 PROBE: ready=%d changed=1 target_uv=1800000\n", (uint64_t)ready);
     return ready;
+}
+
+static int
+chiron_l6_before_usb(const char *args, uint64_t boot)
+{
+    static const efi_guid guid = {
+        0x22d38d3d, 0xe8b6, 0x4f8f, {0x9c, 0x26, 0xbc, 0xeb, 7, 0xd6, 0xcb, 0x68}
+    };
+    struct chiron_reset_vreg *vreg = NULL;
+    if (CHIRON_TOUCH_L6_PREPARE != 1 || chiron_reset_requested(args) != 1 ||
+        chiron_reset_option(args, "chiron_touch_l6=", sizeof("chiron_touch_l6=1") - 1) != 1 ||
+        chiron_touch_loader_owner(args, boot, boot) != CHIRON_TOUCH_DIRECT_BOOT_CPU)
+        return 0;
+    efi_status status = BS->locate_protocol(&guid, NULL, (void **)&vreg);
+    print("CHIRON L6 EARLY: before USB; VREG locate=%x revision=%x\n",
+        (uint64_t)status, vreg ? vreg->revision : 0);
+    if (EFI_ERROR(status) || !vreg || vreg->revision != 0x10005 ||
+        !vreg->get_level || !vreg->get_status)
+        return 0;
+    /* Only prepare L6 here. Reset release remains in the kernel-run preflight. */
+    return chiron_reset_prepare_l6(vreg, args, boot, boot);
 }
 
 static int

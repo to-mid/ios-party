@@ -131,7 +131,7 @@ int main(int argc, char **argv) {
     SCREEN.width = 1080; SCREEN.height = 2160; SCREEN.stride = 4320;
     vreg.revision = 0x10005; vreg.get_level = get_level; vreg.get_status = get_status;
     vreg.set_level_uv = set_level_uv;
-    if (test >= 42) {
+    if (test >= 42 && test <= 45) {
         vreg.get_level = (efi_status (*)(uint32_t, uint32_t, uint32_t *))(uintptr_t)0x1021a8;
         vreg.get_status = (efi_status (*)(uint32_t, uint32_t,
             struct chiron_reset_vreg_status *))(uintptr_t)0x1022ec;
@@ -191,6 +191,21 @@ int main(int argc, char **argv) {
     if (test == 39) vreg.set_level_uv = NULL;
     if (test == 40) l6_uv = 1000000;
     if (test == 41) l6_uv = 1900000;
+    if (test >= 46) {
+        if (test == 48) { set_error = 1; set_ignored = 1; }
+        if (test == 49) args = "chiron_touch_reset=1";
+        assert(chiron_l6_before_usb(args, 0) == (test == 46 || test == 47));
+        assert(!writes && io == 0);
+        assert(voltage_writes == (test == 49 ? 0 : 1));
+        if (test == 46) assert(chiron_reset_prepare(args, 0, 0) == 1);
+        if (test == 47) l6_uv = 1848000;
+        if (test == 47 || test == 48)
+            assert(chiron_reset_prepare(args, 0, 0) == 0);
+        assert(voltage_writes == (test == 49 ? 0 : 1));
+        assert(writes == (test == 46));
+        if (test == 49) assert(!reads && !queries && !stalls);
+        return 0;
+    }
     assert(chiron_reset_prepare(args, 0, 0) == expected);
     assert(writes == (test == 0 || test == 16 || test == 22 || test == 23));
     assert(voltage_writes == (test == 22 || (test >= 29 && test <= 32) || test == 35));
@@ -222,7 +237,7 @@ int main(int argc, char **argv) {
             raise AssertionError(result.stderr)
 
     def test_only_reset_output_changes_after_power_and_delays_pass(self):
-        for case in range(46):
+        for case in range(50):
             with self.subTest(case=case):
                 result = subprocess.run([str(self.program), str(case)], text=True, capture_output=True)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

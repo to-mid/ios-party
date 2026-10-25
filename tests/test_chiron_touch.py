@@ -459,6 +459,12 @@ class LoaderHandoffTests(unittest.TestCase):
             report = touch.loader_overlay(source, reset_prepare=reset, l6_prepare=l6, l6_abi=abi)
             self.assertEqual(report["firmware_mode"], "resident-not-exited")
             self.assertEqual(len(report["result"]), 4 if reset or abi else 3)
+            if l6:
+                generated = (source / "xnuloader/loader.c").read_text()
+                self.assertTrue(report["l6_before_usb"])
+                self.assertLess(generated.index("if (!chiron_l6_before_usb(pi.cmdline,"),
+                                generated.index("if (have_payload && pi.usb_mode)"))
+                self.assertIn("!chiron_reset_prepare(ba->commandLine,", generated)
             if abi:
                 generated = (source / "xnuloader/loader.c").read_text()
                 self.assertTrue(report["kernel_start_disabled"])

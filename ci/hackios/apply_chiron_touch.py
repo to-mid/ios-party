@@ -165,6 +165,16 @@ def loader_overlay(source, reset_prepare=False, l6_prepare=False, l6_abi=False):
                 "\t\treturn 0;\n\t}\n"
                 "\tuint64_t ranges[3] = { 0, plat->io_base, plat->io_size };")
     if l6_prepare:
+        replace('\tif (have_payload && pi.usb_mode) {',
+                '\tif (have_payload) {\n'
+                '\t\tif (!chiron_l6_before_usb(pi.cmdline,\n'
+                '\t\t        READ_SYSREG(MPIDR_EL1) & 0xff00ffffffULL)) {\n'
+                '\t\t\tprint("CHIRON L6 EARLY: refused; USB and kernel not started\\n");\n'
+                '\t\t\tfor (;;) { wdt_pet(); BS->stall(100000); }\n'
+                '\t\t}\n'
+                '\t\tprint("CHIRON L6 EARLY: ready=1; starting USB; reset unchanged\\n");\n'
+                '\t}\n'
+                '\tif (have_payload && pi.usb_mode) {')
         replace('\t\t\tset_result("running", cp, 0);\n'
                 '\t\t\tfb_reply("OKAY", "");\n'
                 '\t\t\tlog_len = 0;',
@@ -235,6 +245,7 @@ def loader_overlay(source, reset_prepare=False, l6_prepare=False, l6_abi=False):
             "l6_prepare_implemented": l6_prepare,
             "l6_screen_trace": l6_prepare,
             "l6_direct_return_marker": l6_prepare,
+            "l6_before_usb": l6_prepare,
             "l6_abi_implemented": l6_abi,
             "kernel_start_disabled": l6_abi,
             "power_write_policy": "LDO6-only-1848000-to-1800000-uV-with-reset-low" if l6_prepare else None,
