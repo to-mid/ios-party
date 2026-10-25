@@ -52,7 +52,7 @@
     "chiron_clock.c": "7362f7a2bb0c3bf38160d1cca38a2cb4474b58cdd8215b6f774cf79a6920f06f"
   },
   "loader_files": {
-    "chiron_l6_capture.inc": "ad3658abb648670dd8bbcba940f6e946ba5e5e378fb4c0766a1fab6bea0a4d64",
+    "chiron_l6_capture.inc": "5b23c561820a7aeba4af6161a50009d5914508c98d99754cd806508c3ed61049",
     "chiron_touch_loader.inc": "0ba4c4adc44b0a3715cbb7ef76e94a2f00b526cb96003871dfdb31d625ec2a6f",
     "chiron_touch_reset.inc": "5daf463417d53b94dd0490439618b7332c0d788ec7b800454f0ae4bbd2ff796b"
   },

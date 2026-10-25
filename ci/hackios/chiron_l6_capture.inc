@@ -138,28 +138,50 @@ chiron_capture_l6(const char *args, uint64_t boot)
     if (EFI_ERROR(BS->get_memory_map(&chiron_capture_map_size, chiron_capture_map,
             &key, &stride, &version)) || stride < sizeof(efi_memory_descriptor) ||
         (stride & 7) || chiron_capture_map_size > sizeof(chiron_capture_map) ||
-        !chiron_capture_map_size || chiron_capture_map_size % stride)
+        !chiron_capture_map_size || chiron_capture_map_size % stride) {
+        print("CHIRON L6 CAPTURE: refused memory map size=%x stride=%x\n",
+            chiron_capture_map_size, stride);
         return 0;
+    }
     chiron_capture_map_stride = stride;
-    if (EFI_ERROR(BS->locate_protocol(&vreg_guid, NULL, (void **)&vreg)) ||
-        EFI_ERROR(BS->locate_protocol(&spmi_guid, NULL, (void **)&spmi)) ||
+    efi_status vreg_status = BS->locate_protocol(&vreg_guid, NULL, (void **)&vreg);
+    efi_status spmi_status = BS->locate_protocol(&spmi_guid, NULL, (void **)&spmi);
+    print("CHIRON L6 CAPTURE: locate vreg=%x spmi=%x interfaces=%x/%x\n",
+        (uint64_t)vreg_status, (uint64_t)spmi_status,
+        (uint64_t)(uintptr_t)vreg, (uint64_t)(uintptr_t)spmi);
+    if (EFI_ERROR(vreg_status) || EFI_ERROR(spmi_status) ||
         !chiron_capture_ram((uintptr_t)vreg, sizeof(*vreg), 0) ||
-        !chiron_capture_ram((uintptr_t)spmi, sizeof(*spmi), 0))
+        !chiron_capture_ram((uintptr_t)spmi, sizeof(*spmi), 0)) {
+        print("CHIRON L6 CAPTURE: refused protocol RAM/lookup\n");
         return 0;
+    }
     uint64_t level = (uintptr_t)vreg->get_level;
     uint64_t base = level >= 0x21a8 ? level - 0x21a8 : 0;
+    print("CHIRON L6 CAPTURE: base=%x revisions=%x/%x\n",
+        base, vreg->revision, spmi->revision);
     if (!base || base > UINT64_MAX - 0x33000 || vreg->revision != 0x10005 ||
         (uintptr_t)vreg->get_status != base + 0x22ec ||
         (uintptr_t)vreg->set_level != base + 0x219c ||
         (uintptr_t)vreg->set_level_uv != base + 0x2118 ||
         spmi->revision != 0x10000 ||
         !chiron_capture_ram(base + 0x15aa0, sizeof(veneer), 0) ||
-        !chiron_capture_ram(base + 0x32030, sizeof(spmi), 1))
+        !chiron_capture_ram(base + 0x32030, sizeof(spmi), 1)) {
+        print("CHIRON L6 CAPTURE: refused profile or veneer/cache RAM\n");
+        for (uint64_t off = 0; off < chiron_capture_map_size; off += stride) {
+            const efi_memory_descriptor *d = (const void *)(chiron_capture_map + off);
+            if (base >= d->phys_start && base - d->phys_start < d->pages * 4096)
+                print("CHIRON L6 CAPTURE: image RAM type=%d attributes=%x\n",
+                    (uint64_t)d->type, d->attribute);
+        }
         return 0;
+    }
     const volatile uint32_t *code = (const void *)(uintptr_t)(base + 0x15aa0);
     for (unsigned i = 0; i < sizeof(veneer) / sizeof(veneer[0]); i++)
-        if (code[i] != veneer[i])
+        if (code[i] != veneer[i]) {
+            print("CHIRON L6 CAPTURE: refused veneer word=%d observed=%x expected=%x\n",
+                (uint64_t)i, (uint64_t)code[i], (uint64_t)veneer[i]);
             return 0;
+        }
     struct chiron_capture_spmi *volatile *cached =
         (void *)(uintptr_t)(base + 0x32030);
     print("CHIRON L6 CAPTURE: SPMI=%x revision=%x cached=%x write=%x\n",
