@@ -512,3 +512,170 @@ profile 匹配只表示相对布局相符，不是固件字节认证或电源写
 本地 46 项相关检查通过，包含 46 个寄存器/只读快照情景及实际 ARM64 loader
 编译；放置到 USB 初始化之后的改动另通过受影响的编译检查。云端交付待完成，
 真正的 SetLevelUv 停滞原因仍未确认，没有新的 QEMU/硬件通过结果。
+
+最终运行 `40095714847` 已完成只读 ABI loader 的编译、链接和打包，提交为
+`61b5d730456b776ce78c2283dd19f21a00dd51b6`。补充 USB 初始化失败时保持驻留，
+避免返回后缓冲区生命周期失效；受影响 ARM64 编译通过。早先运行
+`40084463518` 虽构建成功，但缺此修正，不交付。
+交付 `dist/chiron-driver-candidates/TOUCH-L6-ABI-40095714847/MIX2-EXPERIMENTAL-TOUCH-L6-ABI.img`，
+SHA-256 `0917a532ee9d7f216ddc4e3a8ad7dceb9fe8a7e0abddd7912e5e2c8ca9af4d18`。
+容器 SHA-256/legacy SHA-1、FAT 读回、ARM64 EFI、helper/打包提交绑定、
+只读声明及容量检查通过；内核、固件、DTB 和入口沿用已核验输入。
+记录为 `dist/chiron-touch-l6-abi-40095714847/local-verification.json`。
+只需按同目录 START 临时 boot，直接拍下回调地址和 reference_profile，
+不上传系统、不请求内核启动。真正的电压调用停滞仍待该快照缩小原因，
+本轮没有新的 QEMU 或真机通过结果。
+
+2026-10-24 ABI 实机反馈：照片 `IMG_20261024_221607.jpg`，SHA-256
+`f15cbdce88698a53d3dcc23f305977863892819ef9c2f64928151b98dc3ff80b`。
+协议地址 `0xffe423d0`、revision=`0x10005`；GetLevel=`0xffe131a8`，
+GetStatus=`0xffe132ec`，SetLevel=`0xffe1319c`，SetLevelUv=`0xffe13118`；
+reference_profile=`1`、inferred_base=`0xffe11000`，末行 snapshot complete。
+四个相对入口及协议表地址与参考布局一致，降低了回调槽位取错的可能性，
+不证明固件字节相同、回调内部执行正常或电压已改变。只读快照的本轮硬件
+观察点通过；没有系统启动是本版预期，触摸与原调压调用停滞仍未解决。
+已有 PMIC 参考二进制的 LLVM 静态路径为
+`SetLevelUv 0x2118 -> LDO 0x9fb8 -> 电压算法 0xd5a4 -> SPMI 写接口`，
+与先前读电压的路径不同；不能将读成功当作写接口可用的证据。
+普通 LLVM 分析不属于 REA Evidence，也不能定位手机实际停滞指令。
+下一步聚焦 SPMI 写入及回调返回后的输出边界，保持电压、reset 和所有权前检。
+本轮没有修改 loader、重新构建或新增 QEMU 结果。
+同轮只读 USB 取日志在等待 `xnuloader` 时 15 秒超时，随后 fastboot devices
+列表为空；未取回新日志，也不能据此认定手机内部卡住。没有执行设备启动、
+系统上传或重启。
+
+### L6 回调返回与控制台停滞的最小区分实验
+
+2026-10-24 接手时原触摸会话已 idle。只改 loader：供电、reset 和 CPU
+所有权前检不变；在 SetLevelUv 前直接写右下角 64×64 红块，回调返回后、
+任何格式化日志之前直接改为绿块并清理对应 framebuffer cache。
+标记不调用 console、USB 或 PMIC；面板几何不匹配则拒绝调压调用。
+绿色证明已越过回调返回边界；红色只能说明未完成绿色标记，不能单独定位
+固件内部指令或证明已经写入电压。没有色块时也不能从旧日志推出回调状态。
+既有触摸/时钟/reset/打包共 56 项检查通过，含 ARM64 loader 编译、
+46 个寄存器情景及 ASan/UBSan；模型检查调用时红块、返回后绿块及写入范围。
+隔离提交 `cba1a893a29591b0551b49728c01f42108c3764b` 的云端 loader
+编译、链接和打包运行 `40108883864` 成功，使用 `touch-l6-trace`，
+复用内核运行 `40072910965`，不重编内核或下载 IPSW。
+下载入口 TLS 超时后，按产物编号 `12565299661` 直接取回完成。
+交付 `dist/chiron-driver-candidates/TOUCH-L6-TRACE-40108883864/MIX2-EXPERIMENTAL-TOUCH-L6-TRACE.img`，
+SHA-256 `a66c63cb5929adf2bda8a536eff5d42fb21bbdc47bbcf1ecf8c689af7d0a6adb`。
+容器 SHA-256/legacy SHA-1、ARM64 EFI、FAT 读回、helper/标记/参数/
+打包提交及容量绑定通过；内核仍为 `f4807372c55a2b782282edbe84f364bfb9b641bde3f1446e79643bffefeb6950`，
+固件/DTB/入口与 HK6c 一致，原系统卷复用。记录为
+`dist/chiron-touch-l6-trace-40108883864/local-verification.json`，
+准确两阶段命令已写入同候选目录 START。没有新增 QEMU/实机结果，
+唯一剩余阻塞为手机上的颜色与末行反馈，触摸仍未验证。
+
+2026-10-25 红绿标记实机反馈：照片 `IMG_20261025_081822.jpg`，
+SHA-256 `3d7019e42ed0de87f716c581ce15d58857ab60d4720162cd6d1b220b459c41d8`。
+照片可见新 MARKER 日志、右下角红块，末行为
+`calling SetLevelUv L6=1800000`，未见绿色或 set_status。
+L6=`1848000`、L14=`1880000`、enabled/ok 均为 1，GPIO50 cfg=`3c3`/io=`3`。
+直接 framebuffer 标记已可见；尚未完成返回标记，不能据此判定固件内部
+具体停滞指令、永久挂死或实际电压写入。未到 reset 释放和内核启动。
+
+下一最小实验只提前同一 L6 前检/调用至 loader 的 USB 会话启动之前，
+保留供电、reset 低、CPU 所有权与红绿标记。成功后才开放 USB；
+reset 仍在后续 oem run 严格前检后释放。一次启动最多尝试一次 SetLevelUv，
+后续调压值回退或首次调用失败均不再次写入。失败保持驻留，不自动启动内核。
+目的是判断 loader 的 USB->start_ex/系统上传/内核载荷复制是否为复现的
+必要条件，不预先认定 USB 驱动有错。入口 EFI 的 USB 控制器准备保持原样，
+因此本轮不隔离整个 USB 栈。
+
+隔离提交 `21396ebc9fa4ed5525bef2965aceab738e8557c6` 的云端运行
+`40147754484` 已完成 loader 编译、链接和镜像打包。交付为
+`dist/chiron-driver-candidates/TOUCH-L6-TRACE-40147754484/MIX2-EXPERIMENTAL-TOUCH-L6-TRACE.img`，
+SHA-256 `08734fe4ab59c1a05fc2ee625bd3bdb3597199b552b37a29b9b5d5d446fc646b`。
+本地相关 46 项检查通过，含 ARM64 loader 编译、50 个寄存器情景及
+ASan/UBSan；新增情景覆盖早期成功后正常 reset、读回回退拒绝、错误后不重写、
+缺少显式参数时无硬件访问。容器 SHA-256/legacy SHA-1、ARM64 EFI、
+FAT 读回、helper/提前调用声明/阶段字符串/参数/打包提交及容量绑定通过。
+内核仍为 `f4807372c55a2b782282edbe84f364bfb9b641bde3f1446e79643bffefeb6950`，
+固件/DTB/入口与 HK6c 一致，系统输入复用。静态记录：
+`dist/chiron-touch-l6-trace-40147754484/local-verification.json`。
+先只临时 boot 并拍早期末行与色块，无需先传系统；只有 EARLY ready=1
+及 usb: started 后才按同目录 START 继续原上传流程。新版本 QEMU/实机
+尚未验证，唯一剩余阻塞为这次早期调用的手机反馈，触摸仍未恢复。
+
+2026-10-25 早期调用反馈：照片 `IMG_20261025_085548.jpg`，SHA-256
+`b1a54d75f13f80a835dab3dbbcdd86dc4450182193f6bdc631db3ca8dba7af6a`。
+可见 EARLY before USB、VREG revision=`10005`，供电读回与前轮相同；
+末行为 calling SetLevelUv，右下角仍红，未见绿色、set_status 或 ready。
+loader USB->start_ex、系统上传和内核复制不是复现所必需；入口 EFI 已有
+USB 控制器准备并未排除。未观察到调压返回、reset 释放或内核启动。
+
+只核对已有参考 SPMI 的相关包装层，原二进制 SHA-256
+`910bb5fc610ba2a56b640827527e8ce51d5b47a6501cad371eba3b3585e2a868`。
+普通 LLVM 显示读包装 RVA `1440` 与写包装 `14f8` 均调用
+BootServices RaiseTPL(8)，工作返回后 RestoreTPL；写工作跳至 `2f28`。
+这是参考二进制的静态代码，非 REA Evidence，不证明实机停滞在 RestoreTPL。
+REA 未连接，本轮不安装工具或扩大逆向范围。
+
+下一实验只将电压调用包在外层 TPL_CALLBACK(8)：先用 RaiseTPL(31)/
+RestoreTPL 原值取当前 TPL，只接受 4 或 8，再重查原供电/GPIO/所有权条件。
+绝不在 TPL_HIGH_LEVEL 调 PMIC。调用前红、API 返回后绿，恢复外层 TPL
+返回后蓝；在恢复 TPL 前不调用格式化日志，错误返回也恢复原 TPL。
+TPL 服务缺失或原级别不符时不调压；单次写入、原目标和 reset 条件保持。
+该实验改变事件分发时序，绿不等于原调用路径正常，蓝不等于电压读回成功；
+更高 TPL 通知也未被全部隔离。
+
+云端运行 `40150211449` 已完成新 loader 编译、链接和打包，提交为
+`488ef98206a05e1b55e5bc1d2f3afbd09cca6a9a`。交付：
+`dist/chiron-driver-candidates/TOUCH-L6-TRACE-40150211449/MIX2-EXPERIMENTAL-TOUCH-L6-TRACE.img`，
+SHA-256 `76843ca03a4d2d0b583bf094de387e1d288813f386f753c1a89f92f096bd27f3`。
+本地相关 46 项检查通过，含 ARM64 loader 编译、54 个寄存器/TPL 情景、
+ASan/UBSan；模型确认写 API 在 TPL=8 执行、绿色先于外层恢复、蓝色随后，
+错误返回也恢复原级别；缺 TPL 服务和未知级别时无调压写入。
+容器 SHA-256/legacy SHA-1、ARM64 EFI、FAT 读回、helper/提前调用/
+TPL 范围声明/新阶段字符串/参数/提交及容量绑定通过。内核仍为
+`f4807372c55a2b782282edbe84f364bfb9b641bde3f1446e79643bffefeb6950`，
+固件/DTB/入口与 HK6c 一致，系统输入复用。静态记录为
+`dist/chiron-touch-l6-trace-40150211449/local-verification.json`。
+只先临时 boot 并拍当前 TPL、末行和红/绿/蓝块；准确命令在同目录 START，
+无需先传系统。新版本没有 QEMU 或实机结果；唯一剩余阻塞为手机上的
+TPL/返回标记反馈，触摸仍未恢复。
+
+### 2026-10-25 USB 调试闭环与本地清理
+
+照片 `IMG_20261025_100303.jpg`，SHA-256
+`88cb6d06ace1bddea1317aa00470657add08c9e477cf295a83417edf3a8e32b5`，
+显示 current TPL=4、outer=8，末行为 calling SetLevelUv，右下角仍红。
+外层 TPL_CALLBACK 实验未观察到 API 返回；不能定位固件内部指令或确认实际写压。
+当前 L6 TRACE 版本在 USB 初始化之前调用，故此卡点没有可服务的 USB 日志通道。
+
+用户本轮明确授权代理执行第一阶段 ADB reboot bootloader、fastboot boot、
+USB 取日志及调试重启，取代此前这些操作仅由用户执行的会话限制。
+未执行分区 flash、系统卷上传或 oem run。
+已实际完成：Android `65c68636` → adb reboot bootloader → 原机 fastboot →
+临时启动已核验的 `TOUCH-L6-ABI-40095714847` → xnuloader oem log/get_staged →
+xnuloader reboot → Android ADB 恢复且 sys.boot_completed=1 →
+adb reboot bootloader → 原机 fastboot。当前设备停在原机 fastboot。
+日志为 `out/chiron-touch-l6-abi-usb-20261025.log`，SHA-256
+`cfc2d913b604d6f380847d79adc55d62d101dab739e0e07739ed7093d225808f`；
+reference_profile=1、snapshot complete。该只读镜像没有启动内核或触控。
+源码中的 reboot-bootloader 也仅匹配普通冷重启分支，不能据此声称支持直接
+返回原机 fastboot；经 Android/ADB 中转的闭环已在本机通过。
+该结果仅适用于 USB 仍可响应的路径，不证明 PMIC 卡住时也能远程恢复。
+
+按用户要求清除 57 个已淘汰的调试镜像及大体积中间文件，逻辑大小
+1,627,150,368 字节；删除前后可用空间增加 1,627,181,056 字节（约 1.52 GiB）。
+清单为 `out/failed-image-cleanup-20261025.json`。保留 HK6c 桌面基线、
+系统卷、当前 L6 TRACE、只读 ABI 镜像，以及源码、清单、日志和截图。
+旧交付记录中部分镜像路径因此仅供历史追踪，文件已按本次清单删除。
+本轮无新源码构建或 QEMU 资格；触摸仍未恢复。下一实验必须先解决 PMIC
+阻塞期间的 USB 可观测性与恢复边界，不能将正常路径的重启闭环当作已解决。
+
+### L6 计算与 SPMI 事务边界截取
+
+本轮独立 `touch-l6-capture` 复用内核与固件，只重建 loader。
+USB 先启动，禁用内核启动；保留 L6/L14/GPIO50、reset 低及 CPU 所有权前提。
+核对原 VREG 相对入口、固定 PmicDxe WriteLong 包装指令和可写 RAM 范围，
+要求其私有 SPMI 缓存指针等于当前 LocateProtocol 实例。
+仅在这些条件匹配后，在 TPL_NOTIFY 暂时将该私有指针指向 loader 的影子协议；
+所有六个影子入口均拒绝，绝不转发硬件请求。原 SetLevelUv 只运行计算，
+截取第一个 SPMI 请求的类型、slave、地址及最多四字节数据，然后恢复原指针
+和 TPL，重新检查供电与 reset 未变。前后仍会执行既有只读供电查询。
+这不是一次成功调压；它区分“到达底层事务前阻塞”和“进入 SPMI 原实现才阻塞”。
+普通 LLVM 静态代码用于选择固定包装指令，不是 REA Evidence；本轮构建与
+实机结果待追加，不能继承旧镜像的硬件通过资格。

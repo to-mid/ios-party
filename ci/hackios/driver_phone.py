@@ -129,6 +129,15 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
             raise ValueError("probe cannot request undeclared power writes")
         if type(proof.get("l6_abi", False)) is not bool:
             raise ValueError("L6 ABI mode must be an explicit boolean")
+        if type(proof.get("l6_capture", False)) is not bool:
+            raise ValueError("L6 capture mode must be an explicit boolean")
+        if proof.get("l6_capture", False):
+            loader = proof.get("loader_overlay", {}).get("touch", {})
+            if (proof.get("l6_abi") is not True
+                    or loader.get("l6_capture_implemented") is not True
+                    or loader.get("calculator_spmi_hardware_calls") is not False
+                    or loader.get("firmware_dispatch_redirected") is not True):
+                raise ValueError("L6 capture requires explicit shadow SPMI proof")
         if proof.get("l6_abi", False):
             loader = proof.get("loader_overlay", {}).get("touch", {})
             if (proof.get("read_only") is not True
@@ -231,11 +240,14 @@ def main():
     parser.add_argument("--reset-prepare", action="store_true")
     parser.add_argument("--l6-prepare", action="store_true")
     parser.add_argument("--l6-abi", action="store_true")
+    parser.add_argument("--l6-capture", action="store_true")
     args = parser.parse_args()
     import apply_chiron_smp
     import cloud
 
     cloud.require_runner()
+    if args.l6_capture:
+        args.l6_abi = True
     if args.l6_abi and (args.variant != "touch" or args.clock_prepare or
                        args.pinmux_prepare or args.reset_prepare or args.l6_prepare):
         parser.error("--l6-abi requires touch and no hardware preparation")
@@ -262,7 +274,7 @@ def main():
         import apply_chiron_touch
         overlay = {"cpu_limit": 1, "touch": apply_chiron_touch.loader_overlay(
             args.work, reset_prepare=args.reset_prepare, l6_prepare=args.l6_prepare,
-            l6_abi=args.l6_abi)}
+            l6_abi=args.l6_abi, l6_capture=args.l6_capture)}
     else:
         overlay = apply_chiron_smp.loader_overlay(args.work, chosen["cpu_count"])
     cloud.command(["bash", "xnuloader/build.sh"], cwd=args.work)
@@ -300,6 +312,7 @@ def main():
         "l6_prepare": args.l6_prepare,
         "power_writes": args.l6_prepare,
         "l6_abi": args.l6_abi,
+        "l6_capture": args.l6_capture,
         "read_only": chosen["touch"] and not args.clock_prepare,
         "runtime_qualified": False, "hardware_observed": False, "phone_boot_ready": False,
     }

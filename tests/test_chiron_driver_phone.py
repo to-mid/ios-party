@@ -84,6 +84,25 @@ def clock_fixture():
 
 
 class ExperimentAdmissionTests(unittest.TestCase):
+    def test_l6_capture_requires_shadow_dispatch_and_kernel_disabled(self):
+        proof, inputs, payload = touch_fixture()
+        proof.update(l6_abi=True, l6_capture=True, read_only=True)
+        proof["loader_overlay"]["touch"] = {
+            "l6_abi_implemented": True, "kernel_start_disabled": True,
+            "l6_capture_implemented": True, "calculator_spmi_hardware_calls": False,
+            "firmware_dispatch_redirected": True,
+        }
+        phone.admit_qualification(proof, inputs, payload, True)
+        for key, value in (("l6_capture_implemented", False),
+                           ("calculator_spmi_hardware_calls", True),
+                           ("firmware_dispatch_redirected", False),
+                           ("kernel_start_disabled", False)):
+            altered = copy.deepcopy(proof)
+            altered["loader_overlay"]["touch"][key] = value
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                phone.admit_qualification(
+                    altered, dict(inputs, driver_experiment=altered), payload, True)
+
     def test_l6_abi_snapshot_requires_read_only_loader_and_disabled_kernel(self):
         proof, inputs, payload = touch_fixture()
         proof.update(l6_abi=True, read_only=True)

@@ -108,13 +108,16 @@ def source_overlay(source):
     return apply(source=source)
 
 
-def loader_overlay(source, reset_prepare=False, l6_prepare=False, l6_abi=False):
+def loader_overlay(source, reset_prepare=False, l6_prepare=False, l6_abi=False,
+                   l6_capture=False):
     """Add ownership metadata and, only when selected, the reset preflight."""
     source = Path(source)
     if l6_prepare and not reset_prepare:
         raise ValueError("L6 preparation requires the explicit reset experiment")
     if l6_abi and (reset_prepare or l6_prepare):
         raise ValueError("L6 ABI snapshot cannot enable hardware preparation")
+    if l6_capture and not l6_abi:
+        raise ValueError("L6 capture requires the kernel-disabled ABI experiment")
     path = source / "xnuloader/loader.c"
     text = path.read_text()
     if 'static const struct platform platform_chiron = {' not in text:
@@ -193,6 +196,10 @@ def loader_overlay(source, reset_prepare=False, l6_prepare=False, l6_abi=False):
     if l6_abi:
         replace('\t\tflush_log();\n\t\tusb_command_loop();',
                 '\t\t(void)chiron_inspect_vreg_abi();\n'
+                + ('\t\tint captured = chiron_capture_l6(pi.cmdline,\n'
+                   '\t\t    READ_SYSREG(MPIDR_EL1) & 0xff00ffffffULL);\n'
+                   '\t\tprint("CHIRON L6 CAPTURE: complete=%d\\n", (uint64_t)captured);\n'
+                   if l6_capture else '') +
                 '\t\tflush_log();\n\t\tusb_command_loop();')
         replace('\t\t\tset_result("running", cp, 0);\n'
                 '\t\t\tfb_reply("OKAY", "");\n'
@@ -215,6 +222,9 @@ def loader_overlay(source, reset_prepare=False, l6_prepare=False, l6_abi=False):
                 '\t\twdt_pet();\n'
                 '\t\tBS->stall(100000);\n'
                 '\t}')
+    if l6_capture:
+        replace('#include "chiron_touch_reset.inc"',
+                '#include "chiron_touch_reset.inc"\n#include "chiron_l6_capture.inc"')
     manifest = json.loads(MANIFEST.read_text())
     helper = (HERE / "chiron_touch_loader.inc").read_bytes()
     abi = (DRIVER / "chiron_touch_abi.h").read_bytes()
@@ -229,6 +239,11 @@ def loader_overlay(source, reset_prepare=False, l6_prepare=False, l6_abi=False):
         if digest(reset) != manifest["loader_files"]["chiron_touch_reset.inc"]:
             raise ValueError("touch reset loader manifest mismatch")
         edits["xnuloader/chiron_touch_reset.inc"] = reset
+    if l6_capture:
+        capture = (HERE / "chiron_l6_capture.inc").read_bytes()
+        if digest(capture) != manifest["loader_files"]["chiron_l6_capture.inc"]:
+            raise ValueError("L6 capture loader manifest mismatch")
+        edits["xnuloader/chiron_l6_capture.inc"] = capture
     for relative in edits:
         target = source / relative
         if target.is_symlink() or (target.exists() and target != path):
@@ -248,6 +263,9 @@ def loader_overlay(source, reset_prepare=False, l6_prepare=False, l6_abi=False):
             "l6_before_usb": l6_prepare,
             "l6_tpl_callback_scope": l6_prepare,
             "l6_abi_implemented": l6_abi,
+            "l6_capture_implemented": l6_capture,
+            "calculator_spmi_hardware_calls": False if l6_capture else None,
+            "firmware_dispatch_redirected": l6_capture,
             "kernel_start_disabled": l6_abi,
             "power_write_policy": "LDO6-only-1848000-to-1800000-uV-with-reset-low" if l6_prepare else None,
             "firmware_mode": "resident-not-exited",
