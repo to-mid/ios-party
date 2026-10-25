@@ -799,3 +799,51 @@ ARM64 loader 编译通过。新内核云端构建、打包和实机结果待追�
 `loader_return_after=60 touch_lat=1`：运行约 60 秒后返回 loader，
 并将真实驱动触点的 `tl: p` 行写入其日志，不新增计时/日志基础设施。
 这是有时限的真机实验，不是永久运行桌面版；源内核无需为参数绑定再次构建。
+
+云端源构建 `40182081117`（`a19151177cdee167f9cb9207e8672fdc524cd93b`）
+及打包 `40182415835`（`a200fd60c0d4fcda3c3970a794b8c118d279d029`）
+已完成。新内核 SHA-256 为
+`280d9129b01766d4b75bcccabe86f1e610faf4aa7b1ed9b0c4d61d315a30abe2`，
+源绑定、主动引脚准备、现有计时返回/触点日志和空未定义符号表通过。
+总 make 返回 2 的错误来自 check_all_exports 和 Libkern/IOKit/Private.symbolset，
+对照旧源构建 `40072910965` 为同一组目标；不声明全部上游导出检查通过。
+云端源码检查通过（80 项，16 跳过），最终计时参数的 19 项 admission 检查通过。
+已交付
+`dist/chiron-driver-candidates/TOUCH-ACTIVE-40182415835/MIX2-EXPERIMENTAL-TOUCH-ACTIVE.img`，
+镜像 SHA-256
+`876deabf7888b21a6d60ad7e0f334adea80e30b1a1a33118ad33711be2969506`。
+容器 SHA-256/legacy SHA-1、FAT/ARM64、helper/源码/启动参数/容量绑定通过，
+固件/入口/DTB 与 HK6c 相同。镜像与下载产物硬链接，未复制系统卷。
+同目录 START 提供两阶段命令；预期正常启动后单指点击/拖动，
+约 60 秒回 loader 并读取 `out/chiron-touch-active-usb-20261025.log`，
+检查 DSX 发现、20ms 轮询和 `tl: p` 触点。当前候选尚未上机，
+无新 QEMU 或触摸事件通过结果；唯一剩余阻塞为本轮真实触点验证。
+
+本轮用户启动后 USB 仍可响应，`getvar result` 为 `returned 188564 0`，
+loader 日志确认新内核与主动/计时参数，reset ready=1/changed=1/io=3，
+并已进入用户态 init、launchd 和 backboardd。取回文件为
+`out/chiron-touch-active-usb-20261025.log`，仅 32767 字节，SHA-256
+`d7d99a387c460956ff9d525f5c5b772356f5c455067ecbfa840450a2148f50ae`。
+已定位取日志顺序错误：内核返回时 write_logs 暂存完整内核日志到 out_buf；
+随后代理按此前 START 先发 oem log，触发 compose_logs(NULL,0)，用最大
+32767 字节 log_buf 前缀覆盖完整暂存。当前缺失触摸线程和返回末尾，
+不能据此判断通信成功、无触点或确认计时返回原因，更不能声称触摸恢复。
+START 已改为内核返回后直接 get_staged。本轮无需改内核或重建镜像；
+最小下一实验是在仍驻留相同系统卷的 loader 再执行一次 oem run，
+等待返回后直接 get_staged，保留完整末尾。本轮仅查询和读日志，
+未重启手机、再次运行内核或上传系统卷；当前内核已返回，不是仍在卡死。
+
+用户再次运行后直接 get_staged，完整日志
+`out/chiron-touch-active-full-usb-20261025.log` 为 181552 字节，SHA-256
+`26c89b95dc2a5378e054700a5a0a3d69d982af9d6098e5a1afa436c722f2daf6`，
+含 END OF LOG，getvar result=`returned 180069 0`。
+`loader_return_after expired` 明确确认计时返回；reset ready=1/changed=0/io=3，
+clock/pinmux/board 均返回 0。触摸已通过 PDT 发现阶段后，在布局验证处返回
+`CHIRON_DSX_UNVERIFIED_LAYOUT (-4)`，线程终止，未进入触点轮询；
+具体 F01/F12 拒绝字段尚无证据，不能按错误码猜测或放宽检查。
+SpringBoard 已 spawn/running，backboardd 已提交 surface swap，但这不等于
+桌面可见。USB 帧缓冲 `out/chiron-touch-active-return-screen-20261025.png`
+仍为文本；主动候选误保留诊断 `-v`，固定 loader 将 v_display 置 0，
+源码明确文本滚屏每行搬运约 10MB、会拖慢启动。
+本轮先只删除主动模式的 `-v` 并重打包，继续保留 60 秒回传；
+诊断变体仍保持原参数，内核与系统卷不变，布局失败留待下一轮精确定位。

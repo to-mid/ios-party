@@ -87,7 +87,7 @@ def active_fixture():
     proof, inputs, payload = clock_fixture()
     entries = phone.payload_entries(payload)
     entries["kernel"] += b"CHIRON TOUCH PINMUX PROBE chiron touch: pinmux prepare result="
-    proof["command_line"] = ("cpus=1 epoch=1792760000 -v chiron_touch=1 chiron_touch_reset=1"
+    proof["command_line"] = ("cpus=1 epoch=1792760000 chiron_touch=1 chiron_touch_reset=1"
                              " loader_return_after=60 touch_lat=1")
     entries["cmdline"] = proof["command_line"].encode() + b"\0"
     payload = pack(list(entries.items()))
@@ -158,6 +158,14 @@ class ExperimentAdmissionTests(unittest.TestCase):
             inputs["payload"] = phone.content_digest(altered)
             with self.subTest(argument=argument), self.assertRaisesRegex(ValueError, "arguments"):
                 phone.admit_qualification(proof, inputs, altered, True)
+        proof, inputs, payload = active_fixture()
+        entries = phone.payload_entries(payload)
+        proof["command_line"] = proof["command_line"].replace(" chiron_touch=1", " -v chiron_touch=1")
+        entries["cmdline"] = proof["command_line"].encode() + b"\0"
+        altered = pack(list(entries.items()))
+        inputs["payload"] = phone.content_digest(altered)
+        with self.assertRaisesRegex(ValueError, "arguments"):
+            phone.admit_qualification(proof, inputs, altered, True)
 
     def test_l6_capture_requires_shadow_dispatch_and_kernel_disabled(self):
         proof, inputs, payload = touch_fixture()

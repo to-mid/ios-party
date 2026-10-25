@@ -190,7 +190,7 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
     command = entries["cmdline"]
     pattern = rb"cpus=" + str(chosen["cpu_count"]).encode() + rb" epoch=[0-9]+"
     if chosen["touch"]:
-        pattern += (rb" -v chiron_touch=1" if proof.get("touch_active", False)
+        pattern += (rb" chiron_touch=1" if proof.get("touch_active", False)
                     else rb" -v chiron_touch_pinmux_probe=1" if proof.get("pinmux_prepare", False)
                     else rb" -v chiron_touch_clock_probe=1" if proof.get("clock_prepare", False)
                     else rb" -v chiron_touch_probe=1")
@@ -311,7 +311,7 @@ def main():
     shutil.copy2(args.work / "xnuloader/loader.efi", args.output / "loader.efi")
     command_line = f"{apply_chiron_smp.command_line(chosen['cpu_count'])} epoch={int(time.time())}"
     if chosen["touch"]:
-        command_line += (" -v chiron_touch=1" if args.touch_active
+        command_line += (" chiron_touch=1" if args.touch_active
                          else " -v chiron_touch_pinmux_probe=1" if args.pinmux_prepare
                          else " -v chiron_touch_clock_probe=1" if args.clock_prepare
                          else " -v chiron_touch_probe=1")
