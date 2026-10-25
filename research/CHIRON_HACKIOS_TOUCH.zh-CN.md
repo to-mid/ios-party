@@ -687,3 +687,13 @@ USB 先启动，禁用内核启动；保留 L6/L14/GPIO50、reset 低及 CPU 所
 `out/chiron-l6-capture-usb-20261025.log`；只显示 calculator only 和 complete=0，
 尚未通过协议/代码/RAM 匹配前检，未调用 SetLevelUv，不能推断 SPMI 事务边界。
 本轮补充具体拒绝原因输出，保持同一实验和硬件动作不变。
+
+运行 `40163761403` 的新日志
+`out/chiron-l6-capture-refusal-usb-20261025.log` 已经 USB 取回。
+VREG/SPMI Locate 均成功，接口分别为 `ffe423d0`/`ffe4c080`，
+revision 分别为 `10005`/`10000`。前检拒绝于 profile 或 veneer/cache RAM，
+镜像所在 type=3 描述符 attributes=`100f`，含 WP 以及四种 cache 属性位。
+原探针把描述符 WP 直接当作实际不可写，尚未执行截取或调压。
+下一轮在已分配、非 Runtime、无 RO/RP 的 RAM 边界内，用 AT S1E1W/PAR_EL1
+只译址验证缓存指针首尾页的 EL1 写权限及恒等映射，保留并恢复 PAR_EL1；
+失败仍拒绝。不改页表、不取消保护、不试写以检测权限。

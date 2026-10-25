@@ -17,9 +17,32 @@ _Static_assert(sizeof(struct chiron_capture_spmi) == 56, "SPMI protocol ABI");
 
 static uint8_t chiron_capture_map[65536] __attribute__((aligned(8)));
 static uint64_t chiron_capture_map_size, chiron_capture_map_stride;
+static uint64_t chiron_capture_write_par;
 static struct {
     uint32_t calls, kind, slave, priority, address, length, data;
 } chiron_capture;
+
+static uint64_t
+chiron_capture_translate_write(uint64_t address)
+{
+#if defined(__aarch64__)
+    uint64_t saved, result, features, pan = 0;
+    __asm__ volatile ("mrs %0, id_aa64mmfr1_el1" : "=r" (features));
+    if ((features >> 20) & 15)
+        __asm__ volatile ("mrs %0, S3_0_C4_C2_3" : "=r" (pan));
+    /* S1E1W ignores PAN. Refuse instead of treating it as a full check. */
+    if (pan)
+        return ~UINT64_C(0);
+    __asm__ volatile ("mrs %0, par_el1" : "=r" (saved));
+    __asm__ volatile ("at s1e1w, %1\nisb\nmrs %0, par_el1"
+        : "=r" (result) : "r" (address) : "memory");
+    __asm__ volatile ("msr par_el1, %0" : : "r" (saved) : "memory");
+    return result;
+#else
+    (void)address;
+    return UINT64_MAX;
+#endif
+}
 
 static int
 chiron_capture_ram(uint64_t address, uint64_t bytes, int writable)
@@ -34,11 +57,25 @@ chiron_capture_ram(uint64_t address, uint64_t bytes, int writable)
         /* Only loaded firmware/application RAM, never MMIO or free memory. */
         uint64_t forbidden = (1ULL << 63) | (1ULL << 13);
         if (writable)
-            forbidden |= (1ULL << 12) | (1ULL << 17);
+            forbidden |= 1ULL << 17;
         if (d->type >= 1 && d->type <= 4 && !(d->attribute & forbidden) &&
             address >= d->phys_start &&
-            address + bytes <= d->phys_start + d->pages * 4096)
+            address + bytes <= d->phys_start + d->pages * 4096) {
+            /* This firmware reports WP with all four cache capability bits.
+             * Require the MMU's actual EL1 write permission without writing
+             * data or changing translation/protection state. */
+            if (writable) {
+                const uint64_t mask = UINT64_C(0x0000fffffffff000);
+                uint64_t ends[] = {address, address + bytes - 1};
+                for (unsigned i = 0; i < 2; i++) {
+                    chiron_capture_write_par = chiron_capture_translate_write(ends[i]);
+                    if ((chiron_capture_write_par & 1) ||
+                        (chiron_capture_write_par & mask) != (ends[i] & mask))
+                        return 0;
+                }
+            }
             return 1;
+        }
     }
     return 0;
 }
@@ -167,6 +204,7 @@ chiron_capture_l6(const char *args, uint64_t boot)
         !chiron_capture_ram(base + 0x15aa0, sizeof(veneer), 0) ||
         !chiron_capture_ram(base + 0x32030, sizeof(spmi), 1)) {
         print("CHIRON L6 CAPTURE: refused profile or veneer/cache RAM\n");
+        print("CHIRON L6 CAPTURE: MMU write PAR=%x\n", chiron_capture_write_par);
         for (uint64_t off = 0; off < chiron_capture_map_size; off += stride) {
             const efi_memory_descriptor *d = (const void *)(chiron_capture_map + off);
             if (base >= d->phys_start && base - d->phys_start < d->pages * 4096)
@@ -175,6 +213,12 @@ chiron_capture_l6(const char *args, uint64_t boot)
         }
         return 0;
     }
+    uint64_t cpacr = 0;
+#if defined(__aarch64__)
+    __asm__ volatile ("mrs %0, cpacr_el1" : "=r" (cpacr));
+#endif
+    print("CHIRON L6 CAPTURE: MMU write PAR=%x CPACR=%x\n",
+        chiron_capture_write_par, cpacr);
     const volatile uint32_t *code = (const void *)(uintptr_t)(base + 0x15aa0);
     for (unsigned i = 0; i < sizeof(veneer) / sizeof(veneer[0]); i++)
         if (code[i] != veneer[i]) {

@@ -19,6 +19,8 @@ class CaptureTests(unittest.TestCase):
         if not compiler:
             self.skipTest("host C compiler unavailable")
         helper = (ROOT / "ci/hackios/chiron_l6_capture.inc").read_text()
+        assert helper.count("return UINT64_MAX;") == 1
+        helper = helper.replace("return UINT64_MAX;", "return model_translation(address);")
         # Host functions do not live at the firmware RVAs. Keep all other code.
         for field, offset in (("get_level", "21a8"), ("get_status", "22ec"),
                               ("set_level_uv", "2118"), ("set_level", "219c")):
@@ -66,6 +68,11 @@ static uint32_t chiron_reset_read(uint64_t address) {
     return address == 0x03d59000 ? 0x203 : scenario == 11 ? 3 : 0;
 }
 static void chiron_reset_barrier(void) { __sync_synchronize(); }
+static uint64_t model_translation(uint64_t address) {
+    if (scenario == 7) return 1; /* Actual write permission denied. */
+    if (scenario == 21) return address ^ 0x1000; /* Nonidentity translation. */
+    return address & UINT64_C(0x0000fffffffff000);
+}
 #include "capture.inc"
 static struct chiron_capture_spmi original, *other;
 static struct chiron_reset_vreg vreg;
@@ -75,7 +82,9 @@ static efi_status memory_map(uint64_t *size, void *map, uint64_t *key,
     assert(*size >= sizeof(efi_memory_descriptor));
     efi_memory_descriptor d = {4,0,0,0,UINT64_MAX/4096,0};
     if (scenario == 6) d.type = 7;
-    if (scenario == 7) d.attribute = UINT64_C(1)<<17;
+    if (scenario == 7) d.attribute = 0x100f;
+    if (scenario == 22) d.attribute = UINT64_C(1)<<17;
+    if (scenario == 20 || scenario == 21) d.attribute = 0x100f;
     if (scenario == 8) d.attribute = UINT64_C(1)<<63;
     memcpy(map,&d,sizeof(d)); *size = sizeof(d); *key = 0; *stride = sizeof(d); *version = 1;
     if (scenario == 9) *stride = 0;
@@ -133,8 +142,8 @@ int main(int argc,char **argv) {
     if (scenario==18) services.raise_tpl=NULL;
     if (scenario==19) *cache=NULL;
     int result=chiron_capture_l6("cpus=1 chiron_touch_probe=1",0);
-    assert(result==(scenario<=5));
-    assert(calculator_calls==(scenario<=5 || scenario==15));
+    assert(result==(scenario<=5 || scenario==20));
+    assert(calculator_calls==(scenario<=5 || scenario==15 || scenario==20));
     assert(!physical_calls && tpl==(scenario==13 ? 16u : 4u));
     assert(*cache==(scenario==14 ? other : scenario==19 ? NULL : &original));
     if (calculator_calls) {
@@ -154,7 +163,7 @@ int main(int argc,char **argv) {
                  str(folder / "host.c"), "-o", str(folder / "host")],
                 capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
-            for case in range(20):
+            for case in range(23):
                 with self.subTest(case=case):
                     result = subprocess.run([str(folder / "host"), str(case)],
                                             capture_output=True, text=True)
