@@ -198,6 +198,8 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
             pattern += rb" chiron_touch_reset=1"
         if proof.get("l6_prepare", False):
             pattern += rb" chiron_touch_l6=1"
+        if proof.get("touch_active", False):
+            pattern += rb" loader_return_after=60 touch_lat=1"
     if (not command.endswith(b"\0") or b"\0" in command[:-1]
             or not re.fullmatch(pattern + rb"\0", command)
             or command[:-1].decode("ascii") != proof["command_line"]
@@ -317,6 +319,8 @@ def main():
             command_line += " chiron_touch_reset=1"
         if args.l6_prepare:
             command_line += " chiron_touch_l6=1"
+        if args.touch_active:
+            command_line += " loader_return_after=60 touch_lat=1"
     kernel = args.source_build / "kernel.development.hackios"
     cloud.command([sys.executable, args.work / "xnuloader/mkpayload.py", "--usb",
                    "-o", args.output / "payload.bin", f"kernel={kernel}",
