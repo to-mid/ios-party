@@ -374,10 +374,10 @@ chiron_touch_clock_probe_stop(void)
         (unsigned)chiron_board_report.values[CB_QUP_STATUS]);
 }
 
-static void
-chiron_touch_pinmux_probe_stop(void)
+static int
+chiron_prepare_pinmux(uint32_t *changed)
 {
-    uint32_t changed = 0;
+    *changed = 0;
     int status = chiron_prepare_clocks();
     if (!status) {
         for (unsigned reg = CB_SDA_MUX; reg <= CB_SCL_MUX; reg++) {
@@ -423,7 +423,7 @@ chiron_touch_pinmux_probe_stop(void)
                 status = CB_READ_FAILED;
                 break;
             }
-            changed |= 1u << reg;
+            *changed |= 1u << reg;
             chiron_io_barrier(NULL);
             *(volatile uint32_t *)mapped = (value & ~0x3cu) | 12u;
             chiron_io_barrier(NULL);
@@ -436,6 +436,14 @@ chiron_touch_pinmux_probe_stop(void)
         if (!status || status == CB_RESET)
             status = chiron_board_probe(&chiron_board_io, &chiron_board_report);
     }
+    return status;
+}
+
+static void
+chiron_touch_pinmux_probe_stop(void)
+{
+    uint32_t changed;
+    int status = chiron_prepare_pinmux(&changed);
     chiron_probe_report();
     printf("CHIRON TOUCH PINMUX PROBE result=%d changed=%x; no reset/regulator/QUP writes or worker\n",
         status, (unsigned)changed);
@@ -458,10 +466,13 @@ chiron_touch_thread(void *parameter, wait_result_t result)
     (void)parameter;
     (void)result;
     if (chiron_touch_mode == 1) {
-        status = chiron_prepare_clocks();
+        uint32_t changed;
+        status = chiron_prepare_pinmux(&changed);
+        printf("chiron touch: pinmux prepare result=%d changed=%x\n",
+            status, (unsigned)changed);
         if (status) {
             chiron_probe_report();
-            printf("chiron touch: clock preparation refused (%d); stopped before QUP\n", status);
+            printf("chiron touch: board preparation refused (%d); stopped before QUP\n", status);
             thread_terminate(current_thread());
             return;
         }

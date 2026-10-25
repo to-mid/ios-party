@@ -36,7 +36,7 @@
     "redwood_input.c": "c2d9f98a906fb43e2d6cd1639d258379fc356c35e3c8556bcd013e9f12f0ddc9"
   },
   "overlay_files": {
-    "chiron_xnu.c": "abce86673d05c662ec4f6077a2ec74a56267d9327920bf5168b7cd308487332a",
+    "chiron_xnu.c": "52958a39369ed97af1940a4254912406446ad9eafac4b8b9c0efe12968ded0a0",
     "chiron_dsx.h": "4f1e3dd4999d2e59a79b026a040062579bf4eb0f2569f4814891ca26ccc75f59",
     "chiron_dsx.c": "f2a42d1e647ee0458aafb8e62043b4074e8af665bdc0fc6d5e8ff3923956e5ad",
     "chiron_qup.h": "7f2901382b6597664980fd6f2678ced105c067b908bcccf640c8b1ee736a396c",

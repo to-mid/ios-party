@@ -273,7 +273,7 @@ static void panic(const char *format, ...) {
 }
 static uint64_t mach_absolute_time(void) { return 1000000; }
 static void absolutetime_to_nanoseconds(uint64_t ticks, uint64_t *ns) { *ns = ticks; }
-static int enabled, starts, posts, waits, blocks, waiting_result = THREAD_WAITING;
+static int enabled, starts, posts, waits, blocks, terminations, waiting_result = THREAD_WAITING;
 static event_t wait_event;
 static bool PE_parse_boot_argn(const char *name, void *out, int size) {
     assert(size == 4);
@@ -294,7 +294,7 @@ static int kernel_thread_start(void (*fn)(void *, wait_result_t), void *arg, thr
 }
 static void thread_deallocate(thread_t t) { (void)t; }
 static thread_t current_thread(void) { return NULL; }
-kern_return_t thread_terminate(thread_t t) { (void)t; return 0; }
+kern_return_t thread_terminate(thread_t t) { (void)t; terminations++; return 0; }
 static wait_result_t assert_wait_timeout(event_t event, int mode, uint32_t n, uint32_t scale) {
     assert(event != NULL && mode == THREAD_UNINT && n == 20 && scale == NSEC_PER_MSEC);
     wait_event = event; waits++;
@@ -408,6 +408,37 @@ int main(void) {
     int previous_maps = maps;
     if (!setjmp(panic_env)) { redwood_goodix_init(); assert(0); }
     assert(maps == previous_maps && starts == 0 && posts == 0);
+    /* Exercise the active worker, not just the diagnostic entry point. */
+    valid_platform = 1; pinmux_mode = 0; enabled = 1;
+    gcc_words[0x17000/4] = 0;
+    gpio_words[0] = 0x81; gpio_words[0x1000/4] = 0x42;
+    gpio_words[0x2004/4] = 3;
+    qup_words[0] = 0x12345678;
+    qup_words[8/4] = 3; /* Unsupported FIFO geometry stops before QUP writes. */
+    memcpy(qup_before, qup_words, sizeof(qup_words));
+    redwood_goodix_init();
+    assert(starts == 1 && gpio_words[0] == 0x81);
+    chiron_touch_thread(NULL, 0);
+    assert(terminations == 1 && posts == 0);
+    assert(gpio_words[0] == 0x8d && gpio_words[0x1000/4] == 0x4e);
+    assert(gpio_words[0x2000/4] == 0x203 && gpio_words[0x2004/4] == 3);
+    assert(!memcmp(qup_before, qup_words, sizeof(qup_words)));
+    assert(!memcmp(gcc_before, gcc_words, sizeof(gcc_words)));
+    assert(!memcmp(gic_before, gic_words, sizeof(gic_words)));
+    /* Active mode also refuses an unknown peer mux before changing either pin. */
+    gpio_words[0] = 0; gpio_words[0x1000/4] = 4;
+    memcpy(gpio_before, gpio_words, sizeof(gpio_words));
+    chiron_touch_thread(NULL, 0);
+    assert(terminations == 2 && chiron_board_report.issue == CB_PINMUX);
+    assert(!memcmp(gpio_before, gpio_words, sizeof(gpio_words)));
+    assert(!memcmp(qup_before, qup_words, sizeof(qup_words)));
+    /* The asynchronous read-only mode must retain passive pins. */
+    enabled = 2;
+    redwood_goodix_init();
+    chiron_touch_thread(NULL, 0);
+    assert(starts == 2 && terminations == 3 && posts == 0);
+    assert(!memcmp(gpio_before, gpio_words, sizeof(gpio_words)));
+    assert(!memcmp(qup_before, qup_words, sizeof(qup_words)));
     return 0;
 }
 """)

@@ -85,9 +85,25 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
         raise ValueError("the experimental source kernel was reused")
     if chosen["touch"]:
         touch = source.get("overlays", {}).get("kernel", {}).get("changes", {}).get("touch", {})
+        active = proof.get("touch_active", False)
+        if type(active) is not bool:
+            raise ValueError("active touch mode must be an explicit boolean")
         if (source.get("touch") is not True or touch.get("board_probe_implemented") is not True
-                or proof.get("probe_only") is not True):
+                or proof.get("probe_only") is not (not active)):
             raise ValueError("touch image requires the board probe implementation")
+        if active:
+            loader = proof.get("loader_overlay", {}).get("touch", {})
+            if (touch.get("active_pinmux_prepare_implemented") is not True
+                    or proof.get("qup_writes") is not True
+                    or proof.get("reset_prepare") is not True
+                    or loader.get("reset_retained_android_profile") is not True
+                    or loader.get("reset_power_probe_after_usb_start") is not True
+                    or proof.get("l6_prepare", False)
+                    or proof.get("l6_abi", False)
+                    or proof.get("l6_capture", False)):
+                raise ValueError("active touch requires pinmux, retained power/reset and QUP write proof")
+        elif proof.get("qup_writes", False):
+            raise ValueError("probe cannot request QUP writes")
         if type(proof.get("clock_prepare", False)) is not bool:
             raise ValueError("clock preparation mode must be an explicit boolean")
         if proof.get("clock_prepare", False):
@@ -162,6 +178,9 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
     if chosen["touch"] and proof.get("pinmux_prepare", False):
         if b"CHIRON TOUCH PINMUX PROBE" not in entries["kernel"]:
             raise ValueError("payload kernel lacks the pinmux probe")
+    if chosen["touch"] and proof.get("touch_active", False):
+        if b"chiron touch: pinmux prepare result=" not in entries["kernel"]:
+            raise ValueError("payload kernel lacks active pinmux preparation")
     root = content_digest(entries["ramdisk"])
     if any(root[key] != inputs["small_root"][key] for key in root):
         raise ValueError("payload small root differs")
@@ -171,7 +190,8 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
     command = entries["cmdline"]
     pattern = rb"cpus=" + str(chosen["cpu_count"]).encode() + rb" epoch=[0-9]+"
     if chosen["touch"]:
-        pattern += (rb" -v chiron_touch_pinmux_probe=1" if proof.get("pinmux_prepare", False)
+        pattern += (rb" -v chiron_touch=1" if proof.get("touch_active", False)
+                    else rb" -v chiron_touch_pinmux_probe=1" if proof.get("pinmux_prepare", False)
                     else rb" -v chiron_touch_clock_probe=1" if proof.get("clock_prepare", False)
                     else rb" -v chiron_touch_probe=1")
         if proof.get("reset_prepare", False):
@@ -189,7 +209,8 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
             "hardware_observed": False}
 
 
-def verify_source(folder, variant, source_run, clock_prepare=False, pinmux_prepare=False):
+def verify_source(folder, variant, source_run, clock_prepare=False, pinmux_prepare=False,
+                  touch_active=False):
     proof = json.loads((folder / "driver-build.json").read_text())
     chosen = selection(variant)
     if (proof.get("schema") != "chiron-driver-build-v1"
@@ -224,6 +245,8 @@ def verify_source(folder, variant, source_run, clock_prepare=False, pinmux_prepa
             raise ValueError("touch source build has no clock preparation")
         if pinmux_prepare and report.get("pinmux_prepare_implemented") is not True:
             raise ValueError("touch source build has no pinmux preparation")
+        if touch_active and report.get("active_pinmux_prepare_implemented") is not True:
+            raise ValueError("touch source build has no active pinmux preparation")
     return proof
 
 
@@ -241,11 +264,16 @@ def main():
     parser.add_argument("--l6-prepare", action="store_true")
     parser.add_argument("--l6-abi", action="store_true")
     parser.add_argument("--l6-capture", action="store_true")
+    parser.add_argument("--touch-active", action="store_true")
     args = parser.parse_args()
     import apply_chiron_smp
     import cloud
 
     cloud.require_runner()
+    if args.touch_active:
+        if args.variant != "touch" or args.l6_prepare or args.l6_abi or args.l6_capture:
+            parser.error("--touch-active requires touch and retained power without L6 experiments")
+        args.reset_prepare = True
     if args.l6_capture:
         args.l6_abi = True
     if args.l6_abi and (args.variant != "touch" or args.clock_prepare or
@@ -260,7 +288,7 @@ def main():
     if args.clock_prepare and args.variant != "touch":
         parser.error("clock/pinmux preparation requires the touch variant")
     source = verify_source(args.source_build, args.variant, args.source_run,
-                           args.clock_prepare, args.pinmux_prepare)
+                           args.clock_prepare, args.pinmux_prepare, args.touch_active)
     chosen = selection(args.variant)
     base = args.runtime / "phone"
     inputs = json.loads((base / "inputs.json").read_text())
@@ -281,7 +309,8 @@ def main():
     shutil.copy2(args.work / "xnuloader/loader.efi", args.output / "loader.efi")
     command_line = f"{apply_chiron_smp.command_line(chosen['cpu_count'])} epoch={int(time.time())}"
     if chosen["touch"]:
-        command_line += (" -v chiron_touch_pinmux_probe=1" if args.pinmux_prepare
+        command_line += (" -v chiron_touch=1" if args.touch_active
+                         else " -v chiron_touch_pinmux_probe=1" if args.pinmux_prepare
                          else " -v chiron_touch_clock_probe=1" if args.clock_prepare
                          else " -v chiron_touch_probe=1")
         if args.reset_prepare:
@@ -302,7 +331,9 @@ def main():
         "schema": SCHEMA, "variant": args.variant, "cpu_count": chosen["cpu_count"],
         "source_build": source, "kernel": digest(kernel), "loader_overlay": overlay,
         "command_line": command_line, "packaging_project_sha": os.environ["GITHUB_SHA"],
-        "probe_only": chosen["touch"],
+        "probe_only": chosen["touch"] and not args.touch_active,
+        "touch_active": args.touch_active,
+        "qup_writes": args.touch_active,
         "clock_prepare": args.clock_prepare,
         "clock_writes": args.clock_prepare,
         "pinmux_prepare": args.pinmux_prepare,

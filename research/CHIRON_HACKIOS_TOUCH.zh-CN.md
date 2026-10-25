@@ -748,3 +748,50 @@ Android 健康配置 `0738`/`0758`。未知或短读/失败仍拒绝。
 GPIO89 释放仍留在原 kernel-run 前检，避免扩大固件触摸定时器可运行的窗口。
 不调用 PMIC 写 API，不改 arbiter 归属，不修改电压容差窗口或强制 QUP 就绪。
 本轮构建和第一阶段实机结果待追加，触摸事件尚未验证。
+
+修复版运行 `40174573864` 已完成 loader 编译、链接、打包，提交
+`84535a835684adb2ea9b7d373c1eb885696d6b25`；相关源码检查通过，
+reset 模型覆盖 62 个情景及 ASan/UBSan，实际 ARM64 编译通过。
+交付 `dist/chiron-driver-candidates/TOUCH-RESET-PROBE-40174573864/MIX2-EXPERIMENTAL-TOUCH-RESET-PROBE.img`，
+SHA-256 `c4ce6204eba131d75530edda43e504bf9249401e5b53182d9d05bac50a5e2729`。
+容器 SHA-256/legacy SHA-1、FAT/ARM64、helper/参数/提交/容量与内核绑定通过；
+已部署 loader 含新的只读前检，没有 SetLevelUv 调用阶段字符串。
+内核仍为 `f4807372c55a2b782282edbe84f364bfb9b641bde3f1446e79643bffefeb6950`，
+固件/入口/DTB 与 HK6c 相同，未重新下载 IPSW 或构建内核/系统卷。
+第一阶段已实机临时 boot 并通过 USB 取回 615 字节日志
+`out/chiron-retained-reset-phase1-usb-20261025.log`，SHA-256
+`4b124808521891d900fb02feb9356f8df3cb9bbbf4b2b1c74b623ae4f89c0c15`。
+两路原始配置严格匹配 `0738/0758`，ready=1/preflight=1，reset_cfg=`203`、
+reset_io=0，USB 身份 xnuloader/chiron 且可响应。reset 保持低，未调用改压。
+当前手机停在本候选 USB loader。第一阶段记录为同目录 `hardware-phase1.json`；
+第二阶段命令在 START，仍需系统上传/kernel-run 后的 reset 与 pinmux 反馈。
+本轮没有新 QEMU、内核运行或触摸功能通过结果；不把前检通过记为触摸恢复。
+
+2026-10-25 用户执行第二阶段后，已通过仍可响应的 xnuloader USB 取回
+`out/chiron-retained-reset-stage2-usb-20261025.log`，SHA-256
+`ee8888a0dfed099c14d71a7ae98ebfdd875c29615ad738f957cfb98096707a3a`。
+系统卷已进入 RAM，内核启动并挂载 md0；loader 报告
+`CHIRON RESET PROBE: ready=1 changed=1 AFTER cfg=203 io=3`。
+内核时钟准备 result=0，pinmux result=0/changed=c0，board=0/bad=-1，
+GPIO87/88 均为 c，resetcfg=203/resetio=3。随后按诊断代码主动触发
+`CHIRON TOUCH PINMUX PROBE` panic，并返回 loader，USB 日志读取正常。
+因此本次画面停止是预设诊断终点，不是再次卡在 PMIC 调压；供电前检、
+reset 释放、时钟和引脚检查已在本候选实机通过，未执行触摸事务或事件上报。
+本轮只读取日志，没有新源码编译或 QEMU。下一最小实验是将已验证的
+pinmux 准备接入正常触摸路径，再验证 DSX 发现和触点上报；当前正常路径
+只准备时钟，不能仅移除诊断参数就声称触摸已可用。
+
+### 2026-10-25 正常触摸线程接入引脚准备
+
+将诊断路径已通过的时钟与 GPIO87/88 准备提取为同一函数，正常
+`chiron_touch=1` 线程也执行这段逻辑，成功后才进入原有 QUP/DSX 路径。
+保留未知 mux/OE、CPU 所有权、reset/时钟/总线检查及原诊断 panic。
+新增独立 `touch-active` 打包选项，明确声明 QUP 写入，使用
+`chiron_touch=1 chiron_touch_reset=1`；必须绑定包含主动引脚准备的新内核，
+复用上一轮严格匹配 Android 配置的只读供电前检和 loader 复位时序，
+不启用 L6 调压实验。固件、入口和系统卷不变。
+本地本轮 92 项回归中 91 项通过；唯一错误为清理后历史 HK6 manifest
+仍在但镜像已删除，不是源码断言失败。主动线程引脚切换、未知 peer 拒绝、
+异步只读无写入、打包拒绝旧内核/诊断参数的定向用例与 ASan/UBSan 通过，
+ARM64 loader 编译通过。新内核云端构建、打包和实机结果待追加；
+尚无本轮 QEMU 或触摸事件成功结果。

@@ -83,7 +83,72 @@ def clock_fixture():
     return proof, inputs, payload
 
 
+def active_fixture():
+    proof, inputs, payload = clock_fixture()
+    entries = phone.payload_entries(payload)
+    entries["kernel"] += b"CHIRON TOUCH PINMUX PROBE chiron touch: pinmux prepare result="
+    proof["command_line"] = "cpus=1 epoch=1792760000 -v chiron_touch=1 chiron_touch_reset=1"
+    entries["cmdline"] = proof["command_line"].encode() + b"\0"
+    payload = pack(list(entries.items()))
+    kernel = phone.content_digest(entries["kernel"])
+    proof["kernel"] = kernel
+    proof["source_build"]["artifacts"]["kernel.development.hackios"] = kernel
+    proof["source_build"]["overlays"]["kernel"]["changes"]["touch"].update(
+        pinmux_prepare_implemented=True, active_pinmux_prepare_implemented=True)
+    proof["loader_overlay"]["touch"] = {
+        "reset_prepare_implemented": True, "reset_retained_android_profile": True,
+        "reset_power_probe_after_usb_start": True,
+    }
+    proof.update(probe_only=False, touch_active=True, qup_writes=True,
+                 pinmux_prepare=True, pinmux_writes=True, reset_prepare=True, reset_writes=True)
+    inputs["payload"] = phone.content_digest(payload)
+    return proof, inputs, payload
+
+
 class ExperimentAdmissionTests(unittest.TestCase):
+    def test_active_touch_requires_new_kernel_retained_power_reset_and_explicit_writes(self):
+        proof, inputs, payload = active_fixture()
+        phone.admit_qualification(proof, inputs, payload, True)
+        for key, value in (("touch_active", False), ("touch_active", "true"),
+                           ("probe_only", True), ("qup_writes", False),
+                           ("pinmux_writes", False), ("reset_prepare", False),
+                           ("read_only", True), ("power_writes", True), ("l6_abi", True)):
+            altered = copy.deepcopy(proof)
+            altered[key] = value
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                phone.admit_qualification(
+                    altered, dict(inputs, driver_experiment=altered), payload, True)
+        for key in ("reset_retained_android_profile", "reset_power_probe_after_usb_start"):
+            altered = copy.deepcopy(proof)
+            altered["loader_overlay"]["touch"][key] = False
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                phone.admit_qualification(
+                    altered, dict(inputs, driver_experiment=altered), payload, True)
+        proof["source_build"]["overlays"]["kernel"]["changes"]["touch"][
+            "active_pinmux_prepare_implemented"] = False
+        with self.assertRaisesRegex(ValueError, "active touch"):
+            phone.admit_qualification(proof, inputs, payload, True)
+
+    def test_active_touch_rejects_old_kernel_and_diagnostic_arguments(self):
+        proof, inputs, payload = active_fixture()
+        entries = phone.payload_entries(payload)
+        entries["kernel"] = entries["kernel"].replace(b"chiron touch: pinmux prepare result=", b"")
+        altered = pack(list(entries.items()))
+        proof["kernel"] = phone.content_digest(entries["kernel"])
+        proof["source_build"]["artifacts"]["kernel.development.hackios"] = proof["kernel"]
+        inputs["payload"] = phone.content_digest(altered)
+        with self.assertRaisesRegex(ValueError, "active pinmux"):
+            phone.admit_qualification(proof, inputs, altered, True)
+        proof, inputs, payload = active_fixture()
+        entries = phone.payload_entries(payload)
+        proof["command_line"] = proof["command_line"].replace(
+            "chiron_touch=1", "chiron_touch_pinmux_probe=1")
+        entries["cmdline"] = proof["command_line"].encode() + b"\0"
+        altered = pack(list(entries.items()))
+        inputs["payload"] = phone.content_digest(altered)
+        with self.assertRaisesRegex(ValueError, "arguments"):
+            phone.admit_qualification(proof, inputs, altered, True)
+
     def test_l6_capture_requires_shadow_dispatch_and_kernel_disabled(self):
         proof, inputs, payload = touch_fixture()
         proof.update(l6_abi=True, l6_capture=True, read_only=True)
