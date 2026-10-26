@@ -111,6 +111,38 @@ def active_fixture():
 
 
 class ExperimentAdmissionTests(unittest.TestCase):
+    def test_desktop_touch_requires_explicit_persistent_mode_and_unchanged_kernel(self):
+        proof, inputs, payload = active_fixture()
+        entries = phone.payload_entries(payload)
+        kernel = entries["kernel"]
+        proof["touch_desktop"] = True
+        proof["command_line"] = proof["command_line"].replace(" loader_return_after=60", "")
+        entries["cmdline"] = proof["command_line"].encode() + b"\0"
+        payload = pack(list(entries.items()))
+        inputs["payload"] = phone.content_digest(payload)
+        phone.admit_qualification(proof, inputs, payload, True)
+        self.assertEqual(phone.payload_entries(payload)["kernel"], kernel)
+        for value in (False, "true", 1):
+            altered = copy.deepcopy(proof)
+            altered["touch_desktop"] = value
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                phone.admit_qualification(
+                    altered, dict(inputs, driver_experiment=altered), payload, True)
+        for suffix in (" loader_return_after=60", " loader_return_after=180", " -v"):
+            altered = copy.deepcopy(proof)
+            altered["command_line"] += suffix
+            values = dict(entries, cmdline=altered["command_line"].encode() + b"\0")
+            changed = pack(list(values.items()))
+            with self.subTest(suffix=suffix), self.assertRaises(ValueError):
+                phone.admit_qualification(
+                    altered, dict(inputs, payload=phone.content_digest(changed),
+                                  driver_experiment=altered), changed, True)
+        altered = copy.deepcopy(proof)
+        altered["touch_active"] = False
+        with self.assertRaises(ValueError):
+            phone.admit_qualification(
+                altered, dict(inputs, driver_experiment=altered), payload, True)
+
     def test_active_touch_requires_new_kernel_retained_power_reset_and_explicit_writes(self):
         proof, inputs, payload = active_fixture()
         phone.admit_qualification(proof, inputs, payload, True)

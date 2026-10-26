@@ -951,3 +951,58 @@ Linux `drivers/input/rmi4/rmi_f01.c` 也在写 Control0 后读取 Device Status 
 模型按规范实现 CONFIGURED 读零，并覆盖与手机相同的 Ctrl28=ff、
 Control0=00、一次 CONFIGURED 写入后 Data0 清零的场景；49 项相关检查通过。
 原始规范出处记入 chiron_touch_sources.json，新镜像构建与实机结果待追加。
+
+源构建 `40256861741` 和打包 `40257283950` 已完成，提交
+`1020452e4d8f2c2c442e5cd2bd9251c9d59c6620`。新内核/loader 已链接，
+未定义符号为空；全部 overlay 哈希匹配，实际内核含 Device Status 判定，
+旧 configured_readback 和 configured/sleep bit7 门槛字符串已不存在。
+云端源检查 65 通过、16 跳过，打包 23 项通过；既有导出名单错误仍使总 make 返回 2。
+交付 `dist/chiron-driver-candidates/TOUCH-ACTIVE-40257283950/MIX2-EXPERIMENTAL-TOUCH-ACTIVE.img`，
+SHA-256 `f174f4f20d19fff9892d027970ccab41fe943b30959a864ddd8cd540f7c418b7`，
+内核 SHA-256 `f6756693f847d5ffca2a1a75c6ad4a8ca675f7d5ffb436aecfce4738276fce08`。
+容器 SHA-256/legacy SHA-1、FAT/ARM64、源码/参数/容量绑定通过；
+固件/DTB/入口与 HK6c 相同，写入时序及 60 秒返回不变。
+START 给出新镜像两阶段命令；返回后直接取
+`out/chiron-touch-configured-read-zero-40257283950.log`，重点看实际 Data0 状态、
+是否进入轮询及真实触点。本轮无新 QEMU 或手机操作，不宣称整体触摸已恢复。
+
+用户反馈未见系统画面后，仅只读取得
+`out/chiron-touch-configured-read-zero-40257283950.log`，233288 字节，
+SHA-256 `fa46b84c233e5d19252c90b37e019a6f85d293d9f76cdc3318ca081237d6ac62`，
+含 END OF LOG；`getvar result=returned 231503 0`，参数与本候选一致。
+实机记录 `reset initialization verified; sensor configuration write attempts=1`
+及 `verified DSX layout, polling every 20 ms`；按本版严格判定，支持配置后的
+Device Status 与布局校验通过。后续未记录触摸拒绝/停止，但没有 `tl: p`，
+因此仅授予本候选初始化/布局检查通过，不授予真实触点或交互资格。
+launchd 显示 SpringBoard PID7 running，backboardd 启动完成并提交三次 framebuffer swap，
+同时记录 Apple Logo 覆盖层和 `No explicit screen owner`，没有桌面可见证据。
+完整日志未记录 SpringBoard 退出或内核 panic，明确以
+`loader_return_after expired` 返回；不能把进程 running 当作桌面已进入，
+也不能仅凭计时返回认定桌面不出现必然是时间不足。
+下一最小实验可仅延长观察窗口，复用相同内核和系统卷，验证桌面是否完成启动；
+若仍停在覆盖层再定位用户态/显示交接。lsd CPU monitor 拒绝在旧触摸未启动的
+两份日志中也存在，当前不据此定根因。cpu_test 240 的源码先 sleep，
+不是本次 60 秒窗口内持续运行的 CPU 压测。本次未上传、启动、重启或更改驱动。
+
+### 2026-10-26 回到 HK6c 桌面基线对照
+
+直接解析原 HK6c 与 TOUCH-ACTIVE-40257283950 镜像，确认原版 SHA-256 仍为
+`1f3e9738593eca9c672c8dc2df5bf9986744e08041f7cbf0480173be258f8ee2`。
+两版的固件容器、DTB、EFI 入口、小根卷、系统卷、单核 profile 相同；
+固定上游 sources.json 与基础 chiron-kernel-overlay.json 也完全相同。
+
+| 项目 | HK6c 桌面反馈基线 | 后续触摸实验 |
+| --- | --- | --- |
+| 内核 | e81c527a，原桌面内核 | f6756693，新增触摸覆盖层 |
+| loader | 4deb503d，原窗口接管 | b97a88bc，增加 CPU 所有权/供电前检/GPIO89 复位 |
+| 参数 | cpus=1 epoch=1792739602 | 增加 chiron_touch=1、chiron_touch_reset=1、touch_lat=1 |
+| 自动返回 | 无 | loader_return_after=60 |
+| 用户态、根卷、固件、显示尺寸 | 原输入 | 哈希/字段保持一致 |
+
+本轮保留完整原版，先由用户重新确认是否仍能进入桌面，再测试独立
+`touch-desktop` 候选。该模式只去除触摸实验的 60 秒返回参数，
+复用已验证初始化的同一内核和原系统卷，不扩展硬件初始化或重新构建内核。
+没有返回参数时，固定源码不会安装返回计时器；这与 HK6c 的持续运行行为一致。
+明确的模式证明和参数白名单保留，普通计时实验不能悄悄去掉返回参数。
+20 项相关检查及工作流 YAML/接线检查通过。原版的历史桌面反馈不转移为
+新候选桌面资格；仍需用户观察实际桌面和触摸响应。

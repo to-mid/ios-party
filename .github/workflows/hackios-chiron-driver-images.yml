@@ -8,7 +8,7 @@ on:
         type: choice
         required: true
         default: smp
-        options: [smp, touch-probe, touch-clock-probe, touch-pinmux-probe, touch-reset-probe, touch-l6-probe, touch-l6-trace, touch-l6-abi, touch-l6-capture, touch-active]
+        options: [smp, touch-probe, touch-clock-probe, touch-pinmux-probe, touch-reset-probe, touch-l6-probe, touch-l6-trace, touch-l6-abi, touch-l6-capture, touch-active, touch-desktop]
       touch_source_run:
         description: Successful touch source build run for touch-probe
         type: string
@@ -20,7 +20,7 @@ permissions:
 
 jobs:
   image:
-    name: Experimental ${{ inputs.variant == 'touch-active' && 'TOUCH-ACTIVE' || inputs.variant == 'touch-l6-abi' && 'TOUCH-L6-ABI' || inputs.variant == 'touch-l6-trace' && 'TOUCH-L6-TRACE' || inputs.variant == 'touch-l6-probe' && 'TOUCH-L6-PROBE' || inputs.variant == 'touch-reset-probe' && 'TOUCH-RESET-PROBE' || inputs.variant == 'touch-pinmux-probe' && 'TOUCH-PINMUX-PROBE' || inputs.variant == 'touch-clock-probe' && 'TOUCH-CLOCK-PROBE' || inputs.variant == 'touch-probe' && 'TOUCH-PROBE' || format('SMP{0}', matrix.cpu_count) }}
+    name: Experimental ${{ inputs.variant == 'touch-desktop' && 'TOUCH-DESKTOP' || inputs.variant == 'touch-active' && 'TOUCH-ACTIVE' || inputs.variant == 'touch-l6-abi' && 'TOUCH-L6-ABI' || inputs.variant == 'touch-l6-trace' && 'TOUCH-L6-TRACE' || inputs.variant == 'touch-l6-probe' && 'TOUCH-L6-PROBE' || inputs.variant == 'touch-reset-probe' && 'TOUCH-RESET-PROBE' || inputs.variant == 'touch-pinmux-probe' && 'TOUCH-PINMUX-PROBE' || inputs.variant == 'touch-clock-probe' && 'TOUCH-CLOCK-PROBE' || inputs.variant == 'touch-probe' && 'TOUCH-PROBE' || format('SMP{0}', matrix.cpu_count) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     strategy:
@@ -32,14 +32,15 @@ jobs:
       PYTHONDONTWRITEBYTECODE: '1'
       DRIVER_VARIANT: ${{ startsWith(inputs.variant, 'touch-') && 'touch' || format('smp{0}', matrix.cpu_count) }}
       SOURCE_RUN: ${{ startsWith(inputs.variant, 'touch-') && inputs.touch_source_run || '39964860075' }}
-      IMAGE_LABEL: ${{ inputs.variant == 'touch-active' && 'TOUCH-ACTIVE' || inputs.variant == 'touch-l6-capture' && 'TOUCH-L6-CAPTURE' || inputs.variant == 'touch-l6-abi' && 'TOUCH-L6-ABI' || inputs.variant == 'touch-l6-trace' && 'TOUCH-L6-TRACE' || inputs.variant == 'touch-l6-probe' && 'TOUCH-L6-PROBE' || inputs.variant == 'touch-reset-probe' && 'TOUCH-RESET-PROBE' || inputs.variant == 'touch-pinmux-probe' && 'TOUCH-PINMUX-PROBE' || inputs.variant == 'touch-clock-probe' && 'TOUCH-CLOCK-PROBE' || inputs.variant == 'touch-probe' && 'TOUCH-PROBE' || format('SMP{0}', matrix.cpu_count) }}
+      IMAGE_LABEL: ${{ inputs.variant == 'touch-desktop' && 'TOUCH-DESKTOP' || inputs.variant == 'touch-active' && 'TOUCH-ACTIVE' || inputs.variant == 'touch-l6-capture' && 'TOUCH-L6-CAPTURE' || inputs.variant == 'touch-l6-abi' && 'TOUCH-L6-ABI' || inputs.variant == 'touch-l6-trace' && 'TOUCH-L6-TRACE' || inputs.variant == 'touch-l6-probe' && 'TOUCH-L6-PROBE' || inputs.variant == 'touch-reset-probe' && 'TOUCH-RESET-PROBE' || inputs.variant == 'touch-pinmux-probe' && 'TOUCH-PINMUX-PROBE' || inputs.variant == 'touch-clock-probe' && 'TOUCH-CLOCK-PROBE' || inputs.variant == 'touch-probe' && 'TOUCH-PROBE' || format('SMP{0}', matrix.cpu_count) }}
       CLOCK_PREPARE: ${{ inputs.variant == 'touch-clock-probe' && '1' || '0' }}
       PINMUX_PREPARE: ${{ inputs.variant == 'touch-pinmux-probe' && '1' || '0' }}
       RESET_PREPARE: ${{ inputs.variant == 'touch-reset-probe' && '1' || '0' }}
       L6_PREPARE: ${{ (inputs.variant == 'touch-l6-probe' || inputs.variant == 'touch-l6-trace') && '1' || '0' }}
       L6_ABI: ${{ inputs.variant == 'touch-l6-abi' && '1' || '0' }}
       L6_CAPTURE: ${{ inputs.variant == 'touch-l6-capture' && '1' || '0' }}
-      TOUCH_ACTIVE: ${{ inputs.variant == 'touch-active' && '1' || '0' }}
+      TOUCH_ACTIVE: ${{ (inputs.variant == 'touch-active' || inputs.variant == 'touch-desktop') && '1' || '0' }}
+      TOUCH_DESKTOP: ${{ inputs.variant == 'touch-desktop' && '1' || '0' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -76,6 +77,7 @@ jobs:
           if [ "$L6_ABI" = 1 ]; then EXTRA_ARGS+=(--l6-abi); fi
           if [ "$L6_CAPTURE" = 1 ]; then EXTRA_ARGS+=(--l6-capture); fi
           if [ "$TOUCH_ACTIVE" = 1 ]; then EXTRA_ARGS+=(--touch-active); fi
+          if [ "$TOUCH_DESKTOP" = 1 ]; then EXTRA_ARGS+=(--touch-desktop); fi
           python3 ci/hackios/driver_phone.py \
             --source-build dist/driver-source --source-run "$SOURCE_RUN" \
             --runtime dist/chiron-runtime --variant "$DRIVER_VARIANT" \

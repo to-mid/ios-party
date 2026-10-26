@@ -73,6 +73,10 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
     chosen = selection(proof.get("variant", ""))
     if chosen["variant"] not in ("smp2", "smp8", "touch") or proof.get("cpu_count") != chosen["cpu_count"]:
         raise ValueError("unsupported phone experiment")
+    desktop = proof.get("touch_desktop", False)
+    if type(desktop) is not bool or (desktop and
+            (not chosen["touch"] or proof.get("touch_active") is not True)):
+        raise ValueError("desktop touch requires an explicit active touch experiment")
     source = proof["source_build"]
     if (source.get("schema") != "chiron-driver-build-v1" or source.get("variant") != chosen["variant"]
             or source.get("cpu_count") != chosen["cpu_count"]):
@@ -206,7 +210,7 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
         if proof.get("l6_prepare", False):
             pattern += rb" chiron_touch_l6=1"
         if proof.get("touch_active", False):
-            pattern += rb" loader_return_after=60 touch_lat=1"
+            pattern += rb" touch_lat=1" if desktop else rb" loader_return_after=60 touch_lat=1"
     if (not command.endswith(b"\0") or b"\0" in command[:-1]
             or not re.fullmatch(pattern + rb"\0", command)
             or command[:-1].decode("ascii") != proof["command_line"]
@@ -278,11 +282,15 @@ def main():
     parser.add_argument("--l6-abi", action="store_true")
     parser.add_argument("--l6-capture", action="store_true")
     parser.add_argument("--touch-active", action="store_true")
+    parser.add_argument("--touch-desktop", action="store_true",
+                        help="Active touch with persistent graphics; no timed return to loader")
     args = parser.parse_args()
     import apply_chiron_smp
     import cloud
 
     cloud.require_runner()
+    if args.touch_desktop:
+        args.touch_active = True
     if args.touch_active:
         if args.variant != "touch" or args.l6_prepare or args.l6_abi or args.l6_capture:
             parser.error("--touch-active requires touch and retained power without L6 experiments")
@@ -331,7 +339,8 @@ def main():
         if args.l6_prepare:
             command_line += " chiron_touch_l6=1"
         if args.touch_active:
-            command_line += " loader_return_after=60 touch_lat=1"
+            command_line += (" touch_lat=1" if args.touch_desktop
+                             else " loader_return_after=60 touch_lat=1")
     kernel = args.source_build / "kernel.development.hackios"
     cloud.command([sys.executable, args.work / "xnuloader/mkpayload.py", "--usb",
                    "-o", args.output / "payload.bin", f"kernel={kernel}",
@@ -348,6 +357,7 @@ def main():
         "command_line": command_line, "packaging_project_sha": os.environ["GITHUB_SHA"],
         "probe_only": chosen["touch"] and not args.touch_active,
         "touch_active": args.touch_active,
+        "touch_desktop": args.touch_desktop,
         "qup_writes": args.touch_active,
         "sensor_configuration_writes": args.touch_active,
         "clock_prepare": args.clock_prepare,
