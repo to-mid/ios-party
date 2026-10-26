@@ -78,6 +78,12 @@ int main(void)
     assert(ReleaseReset() && gpio_writes==1);
     bad_power=1; assert(!ReleaseReset() && gpio_writes==1); bad_power=0;
     UINT8 data[8];
+    UINT8 snapshot[40]={0};
+    snapshot[32]=1; snapshot[33]=0xa5;
+    Observe(&mTouch,snapshot,40,16,16,0,15,0);
+    assert(!strcmp(mRaw,"01a5000000000000") && mBitmap==16 && mFrameBytes==40);
+    Observe(&mTouch,snapshot,0,0,0,0,13,0);
+    assert(!mRaw[0] && mFrameBytes==0 && mObserved==13);
     assert(!SelectPage(NULL,0x20,2) && mPage==2);
     assert(ReadRegister(NULL,0x20,8,data,8)==8);
     short_read=1; assert(ReadRegister(NULL,0x20,8,data,8)==-2); short_read=0;

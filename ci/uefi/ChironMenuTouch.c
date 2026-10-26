@@ -234,13 +234,16 @@ Observe (const struct chiron_dsx *Device, const uint8_t *Frame, size_t Bytes,
          uint16_t Before, uint16_t After, uint8_t F01, unsigned Observed, int Result)
 {
   STATIC CONST CHAR8 Hex[] = "0123456789abcdef";
-  UINTN Index, Prefix = Bytes < 8 ? Bytes : 8;
+  UINTN Index, First = 0, Offset, Prefix;
+  while (First < CHIRON_DSX_CONTACTS && !(Before & (1u << First))) First++;
+  Offset = First < CHIRON_DSX_CONTACTS ? First * CHIRON_DSX_OBJECT_BYTES : 0;
+  Prefix = Bytes >= Offset + 8 ? 8 : 0;
   (VOID)Device;
   (VOID)After;
   (VOID)Result;
   for (Index = 0; Index < Prefix; Index++) {
-    mRaw[2 * Index] = Hex[Frame[Index] >> 4];
-    mRaw[2 * Index + 1] = Hex[Frame[Index] & 15];
+    mRaw[2 * Index] = Hex[Frame[Offset + Index] >> 4];
+    mRaw[2 * Index + 1] = Hex[Frame[Offset + Index] & 15];
   }
   mRaw[2 * Prefix] = 0;
   mBitmap = Before;

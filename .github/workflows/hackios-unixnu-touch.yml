@@ -6,6 +6,9 @@ on:
 permissions:
   contents: read
   actions: read
+concurrency:
+  group: chiron-unixnu-menu-touch
+  cancel-in-progress: true
 jobs:
   firmware:
     runs-on: ubuntu-22.04
@@ -54,7 +57,7 @@ jobs:
       - name: Package the menu experiment without rebuilding XNU or the system volume
         run: |
           python3 ci/uefi/package_menu_touch.py \
-            --prior dist/prior-touch \
+            --prior dist/prior-touch/driver-image \
             --template dist/chiron-boot-template/CT-39770335838-1-775f3f2e4009.img \
             --entry dist/chiron-entry/ChironHackios.efi \
             --firmware dist/chiron-memory-firmware \
