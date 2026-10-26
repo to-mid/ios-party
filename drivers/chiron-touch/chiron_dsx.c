@@ -203,6 +203,7 @@ chiron_dsx_poll(struct chiron_dsx *device)
     uint8_t before[2] = {0}, after[2] = {0};
     struct chiron_dsx_layout now = {0};
     unsigned observed = 0;
+    size_t frame_bytes = 0;
     int status;
     if (!device->ready)
         return CHIRON_DSX_UNVERIFIED_LAYOUT;
@@ -212,18 +213,28 @@ chiron_dsx_poll(struct chiron_dsx *device)
         now.contacts != device->layout.contacts || now.flip != device->layout.flip ||
         now.data15 != device->layout.data15 || now.data15_bytes != device->layout.data15_bytes))
         status = CHIRON_DSX_UNVERIFIED_LAYOUT;
+    if (!status)
+        frame_bytes = (size_t)now.contacts * CHIRON_DSX_OBJECT_BYTES;
     if (!status && now.data15_bytes) {
         status = dsx_read(device, now.data15, before, now.data15_bytes);
-        if (!status)
+        if (!status) {
             observed |= CHIRON_DSX_OBS_BEFORE;
+            unsigned mask = (unsigned)before[0] | (unsigned)before[1] << 8;
+            if (mask >> now.contacts)
+                status = CHIRON_DSX_BAD_FRAME;
+            /* Vendor reads only through the highest present object, in one transfer. */
+            unsigned objects = 0;
+            for (unsigned remaining = mask; remaining; remaining >>= 1)
+                objects++;
+            frame_bytes = (size_t)objects * CHIRON_DSX_OBJECT_BYTES;
+        }
     }
-    if (!status && (!now.data15_bytes || before[0] || before[1])) {
-        status = dsx_read(device, device->layout.data1, frame,
-            (size_t)device->layout.contacts * CHIRON_DSX_OBJECT_BYTES);
+    if (!status && frame_bytes) {
+        status = dsx_read(device, device->layout.data1, frame, frame_bytes);
         if (!status) {
             observed |= CHIRON_DSX_OBS_FRAME;
             if (device->observer)
-                for (unsigned i = 0; i < device->layout.contacts * CHIRON_DSX_OBJECT_BYTES; i++)
+                for (size_t i = 0; i < frame_bytes; i++)
                     raw[i] = frame[i];
         }
     }
@@ -255,7 +266,7 @@ chiron_dsx_poll(struct chiron_dsx *device)
         chiron_dsx_stop(device);
     if (device->observer)
         device->observer(device, raw, (observed & CHIRON_DSX_OBS_FRAME) ?
-            (size_t)device->layout.contacts * CHIRON_DSX_OBJECT_BYTES : 0,
+            frame_bytes : 0,
             (uint16_t)(before[0] | (unsigned)before[1] << 8),
             (uint16_t)(after[0] | (unsigned)after[1] << 8), f01_status, observed, status);
     return status;

@@ -1,6 +1,7 @@
 /* Deterministic register model. These values are synthetic, not a handoff. */
 #include <assert.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "chiron_native.h"
@@ -13,6 +14,8 @@ static struct {
     uint64_t elapsed_us;
     int owned, scenario, running, layout_case, sensor_status, bitmap;
     unsigned transactions, sensor_reads, bitmap_reads;
+    unsigned frame_reads;
+    size_t last_frame_bytes;
     uint8_t sensor_control, report_enable, sensor_write_values[2];
     uint16_t sensor_write_addresses[2];
     unsigned sensor_writes, write_error, ignored_write, stuck_reset;
@@ -92,13 +95,17 @@ sensor_read(void *context, uint16_t address, uint8_t *out, size_t length)
         if (m.layout_case == 18) out[2] = 4; /* Palm remapped as finger. */
     } else if (address == functions.f12.control + 4 && length == 1) {
         out[0] = m.layout_case == 28 ? 0x1f : m.report_enable;
-    } else if (address == functions.f12.data + 1 && (length == 16 || length == 80)) {
+    } else if (address == functions.f12.data + 1 && length && length <= 80 && length % 8 == 0) {
+        m.frame_reads++;
+        m.last_frame_bytes = length;
         out[0] = m.layout_case == 34 ? 2 : 1;
         out[1] = 0xf4; out[2] = 1;
         out[3] = 0xe8; out[4] = 3; /* finger0 at 500/1000 */
         if (m.layout_case == 32) m.sensor_status = 0x80;
     } else if (address == functions.f12.data + 2 && (length == 1 || length == 2)) {
         out[0] = (uint8_t)m.bitmap;
+        if (length == 2)
+            out[1] = (uint8_t)(m.bitmap >> 8);
         if (m.layout_case == 30 && ++m.bitmap_reads % 2 == 0) out[0] ^= 1;
     } else if (length == 6 && (address & 0xff) >= 5 &&
         ((address & 0xff) <= 0xe9)) {
@@ -714,6 +721,36 @@ bitmap_snapshots(void)
     assert(chiron_dsx_poll(&device) == CHIRON_DSX_UNVERIFIED_LAYOUT && !posted && !device.ready);
 }
 
+static void
+small_fifo_contact_prefix(void)
+{
+    struct chiron_native native;
+    struct chiron_dsx_bus bus;
+    struct chiron_dsx device;
+    struct chiron_qup_io ops = io();
+    setup(); m.layout_case = 31;
+    m.regs[CQ_IO_MODES / 4] = 0; /* Independent minimum geometry: 32-byte FIFOs. */
+    assert(chiron_native_bind(&native, &ops, 0, &bus) == 0);
+    assert(native.qup.input_bytes == 32);
+    chiron_dsx_init(&device, &bus, post, &posted);
+    assert(chiron_dsx_start(&device) == 0 && device.layout.contacts == 10);
+    posted = 0;
+    int status = chiron_dsx_poll(&device);
+    if (status)
+        fprintf(stderr, "ten-slot single-finger: result=%d input_fifo=%u\n",
+            status, native.qup.input_bytes);
+    assert(status == 0 && posted == 1 && device.ready);
+    assert(m.frame_reads == 1 && m.last_frame_bytes == 8);
+    m.bitmap = 0;
+    assert(chiron_dsx_poll(&device) == 0 && posted == 2 && device.ready);
+    assert(m.frame_reads == 1); /* Lift releases the old slot without stale Data1. */
+    m.bitmap = 1 << 9;
+    assert(chiron_dsx_poll(&device) == CHIRON_DSX_IO && !device.ready && posted == 2);
+    assert(native.last_operation == 1 && native.last_address == functions.f12.data + 1);
+    assert(native.last_bytes == 80 && native.last_result == CHIRON_QUP_UNSUPPORTED);
+    assert(native.qup.ready && m.frame_reads == 1); /* Capacity rejection, not a bus reset. */
+}
+
 static struct {
     unsigned calls, observed;
     size_t bytes;
@@ -763,7 +800,7 @@ poll_observation(void)
     start = m.transactions;
     assert(chiron_dsx_poll(&device) == 0 && posted == 1);
     assert(m.transactions - start == ordinary_transactions); /* No diagnostic I2C reads. */
-    assert(captured.calls == 1 && captured.observed == 15 && captured.bytes == 16);
+    assert(captured.calls == 1 && captured.observed == 15 && captured.bytes == 8);
     assert(captured.before == 1 && captured.after == 1 && captured.f01 == 0);
     assert(captured.raw[0] == 1 && captured.raw[1] == 0xf4 && captured.status == 0);
     m.bitmap = 0;
@@ -799,6 +836,7 @@ int main(int argc, char **argv)
     case 8: retained_pipeline(); break;
     case 9: reset_initialization(); break;
     case 10: poll_observation(); break;
+    case 11: small_fifo_contact_prefix(); break;
     default: assert(0);
     }
     return 0;

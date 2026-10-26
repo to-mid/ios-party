@@ -4,14 +4,26 @@ static int
 cn_select(void *context, uint8_t slave, uint8_t page)
 {
     struct chiron_native *native = context;
-    return chiron_qup_select_page(&native->qup, slave, page);
+    native->last_operation = 0;
+    native->last_address = (uint16_t)((page << 8) | 0xffu);
+    native->last_bytes = 1;
+    int result = chiron_qup_select_page(&native->qup, slave, page);
+    native->last_result = result;
+    if (!result)
+        native->page = page;
+    return result;
 }
 
 static int
 cn_read(void *context, uint8_t slave, uint8_t reg, uint8_t *data, size_t size)
 {
     struct chiron_native *native = context;
-    return chiron_qup_read(&native->qup, slave, reg, data, size);
+    native->last_operation = 1;
+    native->last_address = (uint16_t)((native->page << 8) | reg);
+    native->last_bytes = size;
+    int result = chiron_qup_read(&native->qup, slave, reg, data, size);
+    native->last_result = result;
+    return result;
 }
 
 static int
@@ -30,7 +42,12 @@ cn_absolute_write(void *context, uint16_t address, uint8_t value)
     int result = cn_select(context, 0x20, (uint8_t)(address >> 8));
     if (result)
         return result;
-    return chiron_qup_write_byte(&native->qup, 0x20, (uint8_t)address, value);
+    native->last_operation = 2;
+    native->last_address = address;
+    native->last_bytes = 1;
+    result = chiron_qup_write_byte(&native->qup, 0x20, (uint8_t)address, value);
+    native->last_result = result;
+    return result;
 }
 
 static int
@@ -53,7 +70,9 @@ chiron_native_bind(struct chiron_native *native, const struct chiron_qup_io *io,
     *bus = (struct chiron_dsx_bus){0};
     if (flip > 3)
         return CHIRON_DSX_UNVERIFIED_LAYOUT;
+    native->last_operation = 3;
     int result = chiron_qup_open(&native->qup, io);
+    native->last_result = result;
     if (result)
         return result;
     native->reader = (struct chiron_f12_reader){

@@ -8,6 +8,10 @@ struct chiron_native {
     struct chiron_qup qup;
     struct chiron_f12_reader reader;
     uint8_t initialization_attempted;
+    uint8_t page, last_operation; /* 0 page select, 1 read, 2 control write, 3 open */
+    uint16_t last_address;
+    size_t last_bytes;
+    int last_result;
 };
 
 /*

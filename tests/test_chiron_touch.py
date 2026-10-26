@@ -112,6 +112,9 @@ class NativeTransportTests(unittest.TestCase):
     def test_capture_observes_actual_reads_without_extra_transactions_or_events(self):
         self.run_case(10)
 
+    def test_ten_slot_single_finger_uses_vendor_prefix_with_32_byte_fifo(self):
+        self.run_case(11)
+
 
 class OverlayTests(unittest.TestCase):
     def setUp(self):

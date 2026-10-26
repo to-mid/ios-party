@@ -89,6 +89,7 @@ def active_fixture():
     entries["kernel"] += b"CHIRON TOUCH PINMUX PROBE chiron touch: pinmux prepare result="
     entries["kernel"] += b"chiron touch: reset initialization verified;"
     entries["kernel"] += b"F01.Data0.status_after_configure"
+    entries["kernel"] += b"chiron touch: transport input_fifo="
     proof["command_line"] = ("cpus=1 epoch=1792760000 chiron_touch=1 chiron_touch_reset=1"
                              " loader_return_after=60 touch_lat=1")
     entries["cmdline"] = proof["command_line"].encode() + b"\0"
@@ -98,7 +99,8 @@ def active_fixture():
     proof["source_build"]["artifacts"]["kernel.development.hackios"] = kernel
     proof["source_build"]["overlays"]["kernel"]["changes"]["touch"].update(
         pinmux_prepare_implemented=True, active_pinmux_prepare_implemented=True,
-        reset_sensor_initialization_implemented=True, f01_configured_read_zero_implemented=True)
+        reset_sensor_initialization_implemented=True, f01_configured_read_zero_implemented=True,
+        active_object_prefix_read_implemented=True, transport_result_diagnostics_implemented=True)
     proof["loader_overlay"]["touch"] = {
         "reset_prepare_implemented": True, "reset_retained_android_profile": True,
         "reset_power_probe_after_usb_start": True,
@@ -207,6 +209,11 @@ class ExperimentAdmissionTests(unittest.TestCase):
             "f01_configured_read_zero_implemented"] = False
         with self.assertRaises(ValueError):
             phone.admit_qualification(altered, dict(inputs, driver_experiment=altered), payload, True)
+        for key in ("active_object_prefix_read_implemented", "transport_result_diagnostics_implemented"):
+            altered = copy.deepcopy(proof)
+            altered["source_build"]["overlays"]["kernel"]["changes"]["touch"][key] = False
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                phone.admit_qualification(altered, dict(inputs, driver_experiment=altered), payload, True)
         proof["source_build"]["overlays"]["kernel"]["changes"]["touch"][
             "active_pinmux_prepare_implemented"] = False
         with self.assertRaisesRegex(ValueError, "active touch"):

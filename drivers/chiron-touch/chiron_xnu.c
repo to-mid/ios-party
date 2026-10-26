@@ -481,6 +481,16 @@ chiron_layout_refusal_report(void)
 }
 
 static void
+chiron_transport_report(void)
+{
+    printf("chiron touch: transport input_fifo=%u output_fifo=%u ready=%u last_op=%u address=%x request=%u result=%d\n",
+        (unsigned)chiron_native.qup.input_bytes, (unsigned)chiron_native.qup.output_bytes,
+        (unsigned)chiron_native.qup.ready, (unsigned)chiron_native.last_operation,
+        (unsigned)chiron_native.last_address, (unsigned)chiron_native.last_bytes,
+        chiron_native.last_result);
+}
+
+static void
 chiron_capture_report(const struct chiron_dsx *device, const uint8_t *frame,
     size_t bytes, uint16_t before, uint16_t after, uint8_t f01,
     unsigned observed, int status)
@@ -532,13 +542,16 @@ chiron_touch_thread(void *parameter, wait_result_t result)
     }
     status = chiron_native_transport(&bus);
     if (status) {
+        chiron_transport_report();
         printf("chiron touch: transport refused (%d); no pin/reset/regulator writes\n", status);
         thread_terminate(current_thread());
         return;
     }
+    chiron_transport_report();
     chiron_dsx_init(&chiron_touch, &bus, chiron_post, NULL);
     status = chiron_dsx_start(&chiron_touch);
     if (status) {
+        chiron_transport_report();
         chiron_layout_refusal_report();
         printf("chiron touch: discovery/layout refused (%d)\n", status);
         thread_terminate(current_thread());
@@ -560,6 +573,7 @@ chiron_touch_thread(void *parameter, wait_result_t result)
         /* Thread context is required by redwood_touch_post's mutex/queue. */
         status = chiron_dsx_poll(&chiron_touch);
         if (status) {
+            chiron_transport_report();
             chiron_layout_refusal_report();
             chiron_probe_report();
             printf("chiron touch: report failed (%d), all fingers released; stopped\n", status);
