@@ -1,0 +1,3 @@
+# Physical DSX capture: wake iOS once, then leave all touch events to the driver.
+# Never read or replay touch records here; backboardd owns queue consumption.
+/redwood/bin/rwtouch wait 90 button home 80

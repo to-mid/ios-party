@@ -1221,3 +1221,48 @@ SHA-256 `7f811f87acf1bed2ac0b047c2f72b0cf0d6c556e8d37d3997887e87f03dc0ecd`；
 下一最小实验只修改重放任务：延时后先发一次 HOME 按下/抬起，等待五秒，
 再从底部上滑一次；继续复用内核/大系统卷并关闭物理触摸。
 不修改 sensor、供电或 HID 实现。手机所有启动/上传/run 仍由用户执行。
+
+该最小修正已交付：
+`dist/chiron-driver-candidates/TOUCH-HID-REPLAY-40304386438/MIX2-EXPERIMENTAL-TOUCH-HID-REPLAY.img`，
+SHA-256 `1a4dec10435456e9cab99672cce74d51a6df7875f8921d6b1503492cbbf4ee9c`；
+云端 `40304386438`、提交 `2deb8538540574085056051cce60c6c66fb90ece`。
+4 项定向检查、云端编译/打包及本地容器/FAT/EFI/容量绑定通过；
+新旧重放程序二进制相同，运行内容只改变 jobs。内核/大系统卷/固件复用。
+START 提供本轮完整命令和返回后取日志步骤；新版唤醒及可见上滑仍待用户实机，
+无新内核编译/QEMU，不授予真实触点资格。
+
+用户授权读取新版后，只读取得
+`out/chiron-touch-hid-replay-40304386438-run1.log`，1328386 字节，
+SHA-256 `da7861e2446b3d6858a8dcd13ce48b03fef4429bee9f86005fee0426673091b4`；
+`result=returned 1327669 0`，参数/任务与 40304386438 一致，结束标记完整，无中段丢弃。
+HOME 的 DOWN/UP 均入队且被 backboardd Button 路径识别；随后背光策略 factor=1，
+BootUI 将屏幕归属交给 SpringBoard。触摸 DOWN=1/MOVE=63/UP=1 全部与消费者
+posted 时间戳对应，最长 post→send 约 4.351 秒，未再出现 `ignoring touch event`。
+进一步观察到 `contact 1 presence: touching`、`system gesture stealing the touches`
+及 `contact 1 presence: none`，说明合成触点已被 iOS 的触摸/系统手势代码识别，
+不只是到达发送调用。仍未取得用户对可见上滑的确认，不能授予完整 UI 交互资格。
+
+本轮仅读日志、更新状态，无代码修改、新构建或手机启动/上传/重启。
+后半段不再重复造诊断包；下一步使用原 TOUCH-CAPTURE-40276528772，
+单指长按拖动至少十秒并抬起，取得真实 Data15/Data1→解析→post 的首处断点。
+合成模式关闭物理线程，以上结果不授予真实传感器资格。
+
+用户补充屏幕实际一直亮着。此前“恢复亮屏”的表述只能指 iOS 内部背光策略，
+不能解释为物理屏幕曾灭或 HOME 已验证硬件背光控制。
+核对固定上游 `MiniIOMobileFramebuffer.cpp`：selector 12
+`kFBMethodRequestPowerChange` 与若干空操作一起直接返回成功，无硬件电源操作；
+本轮实机内核日志确有 selector 12 的 1→0→1 调用。
+因此当前显示电源接线不完整，软件暗屏状态可以与实际亮屏不一致；
+旧手势被软件暗屏策略丢弃及新版合成接触识别的日志证据仍成立。
+本轮只核对并记录，不修改显示/背光、触摸或系统卷，不扩展为显示电源移植。
+
+### 2026-10-26 真实 DSX 采样加 HOME 唤醒
+
+用户要求改测真实手指，同样用 HOME 恢复软件亮屏策略。
+新增显式 `touch-capture-wake`，复用源构建 40275677329 和原触摸/复位初始化；
+参数保持 `chiron_touch=1 chiron_touch_reset=1 chiron_touch_capture=1
+loader_return_after=300 touch_lat=1`。小启动卷仅将 rc.jobs 替换为
+`rwtouch wait 90 button home 80`，不发送合成触点，也不读取输入队列。
+原 rwtouch、内核、固件及大系统卷复用；云端只重打小卷及必要启动容器。
+逐条读回仅允许 `/etc/rc.jobs` 改变，参数/资格检查拒绝与合成重放混用。
+本地相关检查及语法通过；云端打包与真实触点观察待完成，不修改 sensor 或显示电源。

@@ -113,6 +113,43 @@ def active_fixture():
 
 
 class ExperimentAdmissionTests(unittest.TestCase):
+    def test_home_wake_requires_real_capture_and_no_synthetic_gesture(self):
+        proof, inputs, payload = active_fixture()
+        entries = phone.payload_entries(payload)
+        entries["kernel"] += b"chiron touch: capture layout"
+        proof["kernel"] = phone.content_digest(entries["kernel"])
+        proof["source_build"]["artifacts"]["kernel.development.hackios"] = proof["kernel"]
+        proof["source_build"]["overlays"]["kernel"]["changes"]["touch"][
+            "poll_frame_capture_implemented"] = True
+        proof["touch_capture"] = True
+        proof["touch_home_wake"] = True
+        proof["command_line"] = proof["command_line"].replace(
+            "loader_return_after=60", "chiron_touch_capture=1 loader_return_after=300")
+        entries["cmdline"] = proof["command_line"].encode() + b"\0"
+        payload = pack(list(entries.items()))
+        inputs["payload"] = phone.content_digest(payload)
+        proof["home_wake"] = {
+            "schema": "chiron-touch-home-wake-v1", "synthetic": False,
+            "gesture_count": 0, "home_button_count": 1, "producer_rebuilt": False,
+            "physical_touch_qualified": False, "logical_readback_changed": ["/etc/rc.jobs"],
+            "root": inputs["small_root"],
+        }
+        phone.admit_qualification(proof, inputs, payload, True)
+        for key, value in (("touch_capture", False), ("touch_active", False),
+                           ("touch_hid_replay", True), ("touch_home_wake", "true")):
+            bad = copy.deepcopy(proof)
+            bad[key] = value
+            with self.assertRaises(ValueError, msg=key):
+                phone.admit_qualification(bad, {**inputs, "driver_experiment": bad}, payload, True)
+        for key, value in (("synthetic", True), ("gesture_count", 1),
+                           ("producer_rebuilt", True), ("home_button_count", 2),
+                           ("logical_readback_changed", ["/bin/rwtouch", "/etc/rc.jobs"]),
+                           ("root", {"bytes": 1, "sha256": "0" * 64})):
+            bad = copy.deepcopy(proof)
+            bad["home_wake"][key] = value
+            with self.assertRaises(ValueError, msg=key):
+                phone.admit_qualification(bad, {**inputs, "driver_experiment": bad}, payload, True)
+
     def test_hid_replay_is_explicit_synthetic_and_excludes_the_physical_producer(self):
         proof, inputs, payload = touch_fixture(
             "cpus=1 epoch=1792760000 chiron_touch=0 loader_return_after=180 touch_lat=1")

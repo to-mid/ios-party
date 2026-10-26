@@ -99,6 +99,21 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
                 or any(replay_proof.get("root", {}).get(k) != inputs["small_root"][k]
                        for k in ("bytes", "sha256"))):
             raise ValueError("HID replay lacks isolated producer or root readback proof")
+    wake = proof.get("touch_home_wake", False)
+    if type(wake) is not bool or (wake and (not capture or replay)):
+        raise ValueError("HOME wake requires physical touch capture without synthetic replay")
+    if wake:
+        wake_proof = proof.get("home_wake", {})
+        if (wake_proof.get("schema") != "chiron-touch-home-wake-v1"
+                or wake_proof.get("synthetic") is not False
+                or wake_proof.get("gesture_count") != 0
+                or wake_proof.get("home_button_count") != 1
+                or wake_proof.get("producer_rebuilt") is not False
+                or wake_proof.get("physical_touch_qualified") is not False
+                or wake_proof.get("logical_readback_changed") != ["/etc/rc.jobs"]
+                or any(wake_proof.get("root", {}).get(k) != inputs["small_root"][k]
+                       for k in ("bytes", "sha256"))):
+            raise ValueError("physical HOME wake lacks wake-only root proof")
     source = proof["source_build"]
     if (source.get("schema") != "chiron-driver-build-v1" or source.get("variant") != chosen["variant"]
             or source.get("cpu_count") != chosen["cpu_count"]):
@@ -325,11 +340,16 @@ def main():
                         help="Observe existing touch reads in graphics mode and return after 300 seconds")
     parser.add_argument("--touch-hid-replay-root", type=Path,
                         help="Explicit synthetic replay root; disables the physical touch producer")
+    parser.add_argument("--touch-home-wake-root", type=Path,
+                        help="Wake-only root for physical capture; no synthetic touch records")
     args = parser.parse_args()
     import apply_chiron_smp
     import cloud
 
     cloud.require_runner()
+    if args.touch_home_wake_root and (
+            args.variant != "touch" or not args.touch_capture or args.touch_hid_replay_root):
+        parser.error("HOME wake root requires explicit physical --touch-capture")
     if args.touch_hid_replay_root and (
             args.variant != "touch" or any((args.touch_active, args.touch_capture,
             args.touch_desktop, args.clock_prepare, args.pinmux_prepare, args.reset_prepare,
@@ -372,6 +392,14 @@ def main():
         if (hid_replay["baseline_root"] != root
                 or hid_replay["root"] != cloud.digest(folder / "root.apfs")):
             raise ValueError("HID replay root or its original baseline differs")
+        shutil.copy2(folder / "root.apfs", args.output / "root.apfs")
+    home_wake = None
+    if args.touch_home_wake_root:
+        folder = args.touch_home_wake_root
+        home_wake = json.loads((folder / "home-wake.json").read_text())
+        if (home_wake["baseline_root"] != root
+                or home_wake["root"] != cloud.digest(folder / "root.apfs")):
+            raise ValueError("HOME wake root or its original baseline differs")
         shutil.copy2(folder / "root.apfs", args.output / "root.apfs")
     cloud.command([sys.executable, HERE / "phone_loader.py", "--work", args.work,
                    "--phone", args.output])
@@ -420,6 +448,8 @@ def main():
         "touch_capture": args.touch_capture,
         "touch_hid_replay": bool(hid_replay),
         "hid_replay": hid_replay,
+        "touch_home_wake": bool(home_wake),
+        "home_wake": home_wake,
         "qup_writes": args.touch_active,
         "sensor_configuration_writes": args.touch_active,
         "clock_prepare": args.clock_prepare,

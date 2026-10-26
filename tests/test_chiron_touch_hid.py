@@ -19,6 +19,24 @@ UPSTREAM = Path("/private/tmp/chiron-hackios-reuse/userland/userland/src")
 
 
 class ReplayTests(unittest.TestCase):
+    def test_physical_capture_root_only_wakes_without_rebuilding_or_replaying_touch(self):
+        baseline = ROOT / "dist/chiron-hackios-39915264473/phone/root.apfs"
+        source = UPSTREAM.parents[1]
+        if not baseline.is_file() or not (source / "tools/apfs/apfs.py").is_file():
+            self.skipTest("local baseline or pinned APFS tools unavailable")
+        sys.path.insert(0, str(hid.HERE))
+        import cloud
+        with tempfile.TemporaryDirectory(prefix="chiron-touch-wake-") as folder:
+            with mock.patch.object(cloud, "require_runner"):
+                _, proof = hid.rebuild_root(
+                    baseline, Path(folder) / "result", source, wake_only=True)
+            self.assertEqual(proof["logical_readback_changed"], ["/etc/rc.jobs"])
+            self.assertFalse(proof["synthetic"])
+            self.assertFalse(proof["producer_rebuilt"])
+            lines = [s for s in (Path(folder) / "result/root/etc/rc.jobs").read_text().splitlines()
+                     if s and not s.startswith("#")]
+            self.assertEqual(lines, ["/redwood/bin/rwtouch wait 90 button home 80"])
+
     def test_small_root_repack_changes_only_jobs_and_replay_binary(self):
         baseline = ROOT / "dist/chiron-hackios-39915264473/phone/root.apfs"
         source = UPSTREAM.parents[1]

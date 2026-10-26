@@ -101,7 +101,7 @@ def install(root, binary):
     }
 
 
-def rebuild_root(baseline, output, source, compiler, sdk, linker):
+def rebuild_root(baseline, output, source, compiler=None, sdk=None, linker=None, *, wake_only=False):
     """Repack only the small root and compare every logical entry after readback."""
     import cloud
 
@@ -146,12 +146,26 @@ def rebuild_root(baseline, output, source, compiler, sdk, linker):
             manifest.append(f"{mode:o}\t{uid}\t{gid}\t{path.lstrip('/')}")
     metadata = output / "metadata.txt"
     metadata.write_text("\n".join(manifest) + "\n")
-    patched = output / "rwtouch.c"
-    patched.write_bytes(replay_source((source / "userland/src/rwtouch.c").read_bytes()))
-    binary = output / "rwtouch"
-    cloud.command([compiler, "-target", "arm64-apple-ios16.5", "--ld-path=" + str(linker), "-isysroot", sdk,
-                   "-O1", "-I", source / "userland/src", patched, "-o", binary])
-    proof = install(root, binary)
+    if wake_only:
+        jobs = (HERE / "chiron_touch_wake.jobs").read_bytes()
+        (root / "etc/rc.jobs").write_bytes(jobs)
+        proof = {
+            "schema": "chiron-touch-home-wake-v1",
+            "synthetic": False, "gesture_count": 0, "home_button_count": 1,
+            "physical_touch_qualified": False, "producer_rebuilt": False,
+            "jobs_sha256": digest(jobs),
+            "reused_program": cloud.digest(root / "bin/rwtouch"),
+        }
+    else:
+        patched = output / "rwtouch.c"
+        patched.write_bytes(replay_source((source / "userland/src/rwtouch.c").read_bytes()))
+        binary = output / "rwtouch"
+        cloud.command([compiler, "-target", "arm64-apple-ios16.5", "--ld-path=" + str(linker), "-isysroot", sdk,
+                       "-O1", "-I", source / "userland/src", patched, "-o", binary])
+        proof = install(root, binary)
+        proof.update(upstream_rwtouch_sha256=UPSTREAM_RWT,
+                     replay_source_sha256=digest(patched.read_bytes()),
+                     rebuilt_program=cloud.digest(binary))
     image = output / "root.apfs"
     cloud.command([sys.executable, tools / "mkapfs.py", "-z", "--plain", "fw",
                    "-o", image, f"{name}={root},manifest={metadata}"])
@@ -159,18 +173,16 @@ def rebuild_root(baseline, output, source, compiler, sdk, linker):
     if new_name != name or after.keys() != original.keys():
         raise ValueError("replay repack changed root directory membership")
     changed = {p for p in original if original[p] != after[p]}
-    if changed != {"/etc/rc.jobs", "/bin/rwtouch"}:
+    expected = {"/etc/rc.jobs"} if wake_only else {"/etc/rc.jobs", "/bin/rwtouch"}
+    if changed != expected:
         raise ValueError(f"replay repack changed unexpected entries: {sorted(changed)}")
     for path in changed:
         if original[path][:3] != after[path][:3]:
             raise ValueError(f"replay repack changed file ownership or mode: {path}")
     proof.update(baseline_root=cloud.digest(baseline), root=cloud.digest(image),
-                 upstream_rwtouch_sha256=UPSTREAM_RWT,
-                 replay_source_sha256=digest(patched.read_bytes()),
                  logical_readback_changed=sorted(changed),
-                 rebuilt_program=cloud.digest(binary), hardware_observed=False,
-                 runtime_qualified=False)
-    cloud.save(output / "hid-replay.json", proof)
+                 hardware_observed=False, runtime_qualified=False)
+    cloud.save(output / ("home-wake.json" if wake_only else "hid-replay.json"), proof)
     return image, proof
 
 
@@ -187,11 +199,22 @@ def main():
     build.add_argument("--baseline", type=Path, required=True)
     build.add_argument("--work", type=Path, required=True)
     build.add_argument("--output", type=Path, required=True)
+    wake = sub.add_parser("wake")
+    wake.add_argument("--baseline", type=Path, required=True)
+    wake.add_argument("--work", type=Path, required=True)
+    wake.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.mode == "source":
         args.output.write_bytes(replay_source(args.upstream.read_bytes()))
     elif args.mode == "install":
         print(json.dumps(install(args.root, args.binary), indent=2))
+    elif args.mode == "wake":
+        import cloud
+        cloud.require_runner()
+        sources = json.loads(cloud.SOURCES.read_text())
+        source = args.work / "userland"
+        cloud.fetch_git(source, sources["userland"]["url"], sources["userland"]["commit"])
+        rebuild_root(args.baseline, args.output, source, wake_only=True)
     else:
         import cloud
         cloud.require_runner()
