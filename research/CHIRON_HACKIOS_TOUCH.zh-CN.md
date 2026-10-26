@@ -1374,3 +1374,29 @@ USER_INTERACTIVE QoS 请求及一次返回值/查询日志，保留原逐条读�
 生成源码绑定原 inject.c SHA-256，资格检查要求显式消费者重编和 QoS 来源。
 31 项相关本地检查、Python/工作流语法通过，含实际插入片段的成功/失败路径、
 输入库重打范围及不夹带合成触点。云端实际编译和延迟改善待验证。
+
+云端 `40327776076` 成功，提交 `6718f4a46059d59b6c9be4bf3a8f1a4931d1daa8`；
+交付 `dist/chiron-driver-candidates/TOUCH-INPUT-QOS-40327776076/MIX2-EXPERIMENTAL-TOUCH-INPUT-QOS.img`，
+SHA-256 `c0331e82067f55336e7b43dd12f5ad83882edc03942dc912d86c6f02dd8c9dad`。
+实际输入库 ARM64/DYLIB、安装路径、QoS 标记、源码及二进制哈希与镜像读回匹配。
+新输入库 SHA-256 `1513f3256d246fd7ac223c5105c7ed288a7e5e0f064c23457b706a68d90eeb31`；
+原 c94116da 内核、HOME/真实采样参数、固件/DTB/入口/profile 和原系统卷复用。
+本地容器/FAT/EFI/来源/容量、小卷回读与云端编译/打包通过。
+本轮无新内核构建、QEMU 或手机操作，不授予延迟改善资格。
+START 提供本轮完整命令；返回后取 `out/chiron-touch-input-qos-40327776076-run1.log`，
+先检查 request/query/class，再与 4.353 秒基线比较 post→read/post→sent 及可见拖动。
+
+### 2026-10-26 单核真实触摸可见通过，冻结实验发布
+
+用户确认“能触摸了，但很卡”。只读取得
+`out/chiron-touch-input-qos-40327776076-run1-retry.log`，1065612 字节，
+SHA-256 `c3e6fb30041129618a846b5e0b0b26332bc1f412343ba1c44a6204307135c9d8`；
+`result=returned 1063802 0`，结束标记完整、无中段丢弃。
+QoS request=0/query=0/class=33/relative=0；采样跨 297.958 秒，
+5 次换帧 result=1 后继续，无 report failed、暗屏忽略或提前停止。
+真实 DOWN=16/MOVE=21/UP=16，共 53 条，与消费者 type+posted 时间戳逐项匹配。
+post→sent 中位 401.763ms、P95=1427.093ms、最长 2141.655ms，
+post→read 中位 376.599ms。操作负载不同，不能将与上一轮的差值宣称为严格 A/B 增益。
+授予本候选本轮可见真实触摸资格；仍卡顿，不授予流畅拖动、稳定版或多核资格。
+按用户要求冻结为 GitHub 实验发布；只发布启动镜像、清单、上传脚本及说明，
+不发布原系统卷、设备日志或凭据。多核另做同簇双核组合构建，保留单核基线。
