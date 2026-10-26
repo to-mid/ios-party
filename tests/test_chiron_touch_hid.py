@@ -51,8 +51,8 @@ class ReplayTests(unittest.TestCase):
                  if s and not s.startswith("#")]
         self.assertEqual(len(lines), 1)
         self.assertEqual(lines[0].split(),
-                         ["/redwood/bin/rwtouch", "wait", "90", "swipe",
-                          "0.8", "0.5", "0.2", "0.5", "500"])
+                         ["/redwood/bin/rwtouch", "wait", "90", "button", "home", "80",
+                          "wait", "5", "swipe", "0.5", "0.985", "0.5", "0.3", "500"])
 
     def test_actual_producer_releases_after_failed_move_and_has_no_duplicate_up(self):
         if not (UPSTREAM / "rwtouch.c").exists() or not shutil.which("cc"):

@@ -1188,3 +1188,36 @@ SHA-256 `f61550745f9513a516363d2cb72ebce5595dbc34a51307ba0a186dc174a1fddd`。
 原系统卷及固件保持。验收须同时检查 `tl: p` 入队、`tl: i` 用户态处理和屏幕响应；
 排队成功不能证明消费者已就绪，合成手势通过不能授予真实触点资格。
 本地定向检查已通过，云端实际编译/打包及手机观察尚待完成。
+
+云端 `40299372301` 已成功，提交 `0803389890095b00f15566d0e657326ca624c7df`；
+首轮 `40298732750` 因准备函数的版本查询缺少 QEMU 依赖而失败，补齐 QEMU/7-Zip 后重跑。
+交付 `dist/chiron-driver-candidates/TOUCH-HID-REPLAY-40299372301/MIX2-EXPERIMENTAL-TOUCH-HID-REPLAY.img`，
+SHA-256 `4c91241c58ad4cadbfce56b5b65de8f0cc8392d48714626c18d9db1baefeddb1`。
+内核仍为 `be880508...`，小启动卷 `9af55599...`，系统卷不变。
+26 项本地定向检查、云端 ARM64 重放工具/loader 编译及小卷逐条读回、打包通过；
+本地容器/FAT/EFI/参数/容量和原固件/DTB/入口比较通过。
+本轮无新内核构建、QEMU 或手机操作；唯一待验收为这次合成手势的入队、用户态处理与屏幕响应。
+
+用户反馈“触摸没有任何反应，也没日志”后，只读取得
+`out/chiron-touch-hid-replay-40299372301.log`，189 字节，
+SHA-256 `b400e71493c65d718a457ef66ef0dcfc442726494cd517749d3e587bd85538ba`。
+仅含 loader 初始化到 `usb: started`，随后查询 `result=idle`；
+没有本轮 kernel run/返回、rwtouch 或 tl:p/i 记录，不能归为 HID 实机失败。
+通用初始日志也不能确认实际 payload 身份；若用户中途重启，无法凭此恢复前次运行。
+本版物理触摸关闭，验收应为上传原系统卷/run 后的单次自动横滑及 180 秒返回日志。
+未改驱动、上传、启动或重启手机；下一份运行日志另存 `...40299372301-run1.log`。
+
+用户提供本轮临时 boot、完整系统卷上传及 run ACK 后，首次 get_staged 挂起。
+只终止已核对 PID/命令的 Mac 端读取进程，以 15 秒宿主超时重试，成功取回
+`out/chiron-touch-hid-replay-40299372301-run1-retry.log`，1391210 字节，
+SHA-256 `7f811f87acf1bed2ac0b047c2f72b0cf0d6c556e8d37d3997887e87f03dc0ecd`；
+`result=returned 1390493 0`，含完整结束标记、无日志中段丢弃。
+参数与本候选一致，重放程序执行完成，队列与消费者均有 DOWN=1/MOVE=63/UP=1，
+65 个 posted 时间戳逐项对应，最长 post→send 约 3.536 秒。
+这证明合成事件经过队列并进入 backboardd 的既有 HID 发送代码，不授予可见交互资格。
+
+画面无响应出现了具体原因：backboardd 对本手势明确记录
+`ignoring touch event ((backlight dim/off))`。不能仅凭 tl:i 说桌面已接受。
+下一最小实验只修改重放任务：延时后先发一次 HOME 按下/抬起，等待五秒，
+再从底部上滑一次；继续复用内核/大系统卷并关闭物理触摸。
+不修改 sensor、供电或 HID 实现。手机所有启动/上传/run 仍由用户执行。

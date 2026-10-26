@@ -1,4 +1,5 @@
 # Explicit synthetic input diagnostic; never install in a normal phone image.
 # Do not run rwtouch read: it would compete with backboardd for the same queue.
-# One swipe only, after the desktop has had time to start. No physical driver.
-/redwood/bin/rwtouch wait 90 swipe 0.8 0.5 0.2 0.5 500
+# Wake once before the single swipe: backboardd rejected the first run as dim/off.
+# No physical driver; reuse the existing HOME button and gesture producers.
+/redwood/bin/rwtouch wait 90 button home 80 wait 5 swipe 0.5 0.985 0.5 0.3 500
