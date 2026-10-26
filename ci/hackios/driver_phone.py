@@ -95,6 +95,7 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
             loader = proof.get("loader_overlay", {}).get("touch", {})
             if (touch.get("active_pinmux_prepare_implemented") is not True
                     or touch.get("reset_sensor_initialization_implemented") is not True
+                    or touch.get("f01_configured_read_zero_implemented") is not True
                     or proof.get("sensor_configuration_writes") is not True
                     or proof.get("qup_writes") is not True
                     or proof.get("reset_prepare") is not True
@@ -185,6 +186,8 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
             raise ValueError("payload kernel lacks active pinmux preparation")
         if b"chiron touch: reset initialization verified;" not in entries["kernel"]:
             raise ValueError("payload kernel lacks reset sensor initialization")
+        if b"F01.Data0.status_after_configure" not in entries["kernel"]:
+            raise ValueError("payload kernel lacks the F01 device-status verification")
     root = content_digest(entries["ramdisk"])
     if any(root[key] != inputs["small_root"][key] for key in root):
         raise ValueError("payload small root differs")
@@ -255,6 +258,8 @@ def verify_source(folder, variant, source_run, clock_prepare=False, pinmux_prepa
             raise ValueError("touch source build has no active pinmux preparation")
         if touch_active and report.get("reset_sensor_initialization_implemented") is not True:
             raise ValueError("touch source build has no reset sensor initialization")
+        if touch_active and report.get("f01_configured_read_zero_implemented") is not True:
+            raise ValueError("touch source build has no CONFIGURED read-zero semantics")
     return proof
 
 

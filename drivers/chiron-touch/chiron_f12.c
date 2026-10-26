@@ -129,10 +129,10 @@ cf_validate(void *context, const struct chiron_dsx_functions *functions,
     if (status != 0 && !reset)
         return cf_refuse(reader, "F01.Data0.status", functions->f01.data,
             &status, 1, "0x00");
-    if ((device_control & (reset ? 3u : 0x83u)) != (reset ? 0u : 0x80u))
-        return cf_refuse(reader, "F01.Control0.configured/sleep", functions->f01.control,
-            &device_control, 1, reset ? "(value & 0x03) == 0 (awake)" :
-            "(value & 0x83) == 0x80");
+    /* RMI4 3.2.1: CONFIGURED is write-only/read-zero; Data0 reports readiness. */
+    if (device_control & 3u)
+        return cf_refuse(reader, "F01.Control0.sleep", functions->f01.control,
+            &device_control, 1, "(value & 0x03) == 0 (awake)");
     CF_READ(functions->f01.query, 0, f01, sizeof(f01));
     /* Upstream reads the build ID separately from the standard query burst. */
     CF_READ(functions->f01.query, 18, build_id, sizeof(build_id));
@@ -252,9 +252,13 @@ cf_validate(void *context, const struct chiron_dsx_functions *functions,
         if (reader->write(reader->context, functions->f01.control, configured))
             return CHIRON_DSX_IO;
         CF_READ(functions->f01.control, 0, &device_control, 1);
-        if (device_control != configured)
-            return cf_refuse(reader, "F01.Control0.configured_readback", functions->f01.control,
-                &device_control, 1, "written Control0 with CONFIGURED bit set");
+        if ((device_control & 0x7fu) != (configured & 0x7fu))
+            return cf_refuse(reader, "F01.Control0.rw_readback", functions->f01.control,
+                &device_control, 1, "read/write bits [6:0] unchanged; CONFIGURED reads zero");
+        CF_READ(functions->f01.data, 0, &status, 1);
+        if (status != 0)
+            return cf_refuse(reader, "F01.Data0.status_after_configure", functions->f01.data,
+                &status, 1, "0x00 (Unconfigured and reset status cleared)");
         return cf_validate(reader, functions, layout, 0);
     }
     *layout = pending;

@@ -4,6 +4,13 @@
   "xnu_tag": "xnu-8796.121.2",
   "status": "experimental-clock-bringup-runtime-unqualified",
   "board_probe_implemented": true,
+  "rmi4_register_semantics": {
+    "document": "Synaptics RMI4 Interfacing Guide 511-000136-01 Rev E (2011)",
+    "public_document_mirror": "https://www.scribd.com/document/121468991/RMI4-Intrfacing-Guide-pdf",
+    "configured_control": "3.2.1: F01 Control0 bit7 is write-only and reads zero",
+    "configured_status": "3.3.1: F01 Data0 bit7 Unconfigured reports the actual configuration state",
+    "linux_reference": "drivers/input/rmi4/rmi_f01.c: rmi_f01_initialize writes Control0 then checks Device Status"
+  },
   "firmware_upstream": {
     "repository": "Rivko/android-firmware-qti-sdm670",
     "commit": "20bb8ae36c93fc16bbadda0e0a83f930c0c8a271",
@@ -42,7 +49,7 @@
     "chiron_qup.h": "5c657fff55caa15c13e02e81ff0ae2de8cde122fe80573d738ac3a0c2169b88e",
     "chiron_qup.c": "a1b679e07732febf4f3982ca8b7e8612459476d980581b5ae813f43c2a767807",
     "chiron_f12.h": "267b6b171941602d3c502149d5f709f7b770fa83ab61bf59fb5f141a0b6f9659",
-    "chiron_f12.c": "7712ae2d6485aff9bb3efa7644fbf2f34459e21bc271995de02229ba17e70465",
+    "chiron_f12.c": "f604f55d98bbd72af79bb1d274ea48a00f97cb3b86733d00feab1126f4d21a42",
     "chiron_native.h": "a3e5473e9b15eebc6611d7b2909430e99150a9128c0133950e61bc8ec744307c",
     "chiron_native.c": "f55208b246ea9d199acd4f7f904e9dd4ab435e851d33f49a07e9b2fef5032a00",
     "chiron_board.h": "d1fe010ea374f51897cf5af4a74efd16996cd240c91a073f20e9b5de29e8cae7",

@@ -912,3 +912,42 @@ launchd/SpringBoard 已运行，backboardd 记录 Apple Logo 与 framebuffer swa
 本地相关 49 项检查通过，含 ASan/UBSan 的两地址写入次序、保留控制位、
 写入失败/忽略写入/状态未恢复，以及真实 QUP 写 tag 到首次轮询与后续复位停止。
 云端新内核及打包待追加，本段不授予实机触摸资格。
+
+云端源构建 `40254481800`、打包 `40255146370` 已完成，绑定提交
+`0b595e6459d249d9141d7917d819077bb9a1b00c`。新内核与 loader 已链接、
+未定义符号表为空；实际初始化/写字节符号、控制回读日志及全部 overlay 哈希匹配。
+云端源检查 65 通过、16 跳过，打包检查 23 项通过；总 make 的既有导出名单错误仍为 2。
+交付 `dist/chiron-driver-candidates/TOUCH-ACTIVE-40255146370/MIX2-EXPERIMENTAL-TOUCH-ACTIVE.img`，
+SHA-256 `d4c4f9cf0cf3a7d228ce4302a4f3807032806c4f1af6bf63c50394c58494a666`，
+内核 SHA-256 `a459de31337139f5eae412443797b106d3709b6667988002f40eeb2fcac6d9de`。
+本地容器 SHA-256/legacy SHA-1、FAT/ARM64、内核/参数/写入声明/容量绑定通过，
+固件/DTB/入口与 HK6c 相同；原系统卷未重新构建。START 明确要求先启动新镜像，
+再上传运行并点击/拖动；约 60 秒返回后直接取
+`out/chiron-touch-reset-init-40255146370.log`。本轮未执行 QEMU 或手机操作，
+剩余阻塞为真机初始化回读、真实触点与界面响应；不提前宣称触摸恢复。
+
+用户上机后仅只读取得 `out/chiron-touch-reset-init-40255146370.log`，
+239360 字节，SHA-256 `9dac99957dd4fbf5e9678a9a23c73fe9d4f98868435230c1593483b17fe61dc9`，
+含 END OF LOG；`getvar result=returned 237575 0`，实际参数与本轮候选一致。
+reset/clock/pinmux/board 与 PDT 发现均通过；首次拒绝变为
+`F01.Control0.configured_readback address=c actual=00`，配置写入尝试数为 1。
+按实际初始化分支，Ctrl28 已是 ff，唯一尝试是 F01 Control0 的 CONFIGURED 写入；
+写回调未报错，但随后的读回未保持配置位，不能据此断言具体总线/硬件原因。
+没有初始化成功、20ms 轮询或 tl: p 触点记录，触摸仍未恢复。
+`loader_return_after expired` 确认预设计时返回；下一最小排查点为配置写入与读回，
+不放宽验证。本次未改驱动、重建镜像、上传、启动或重启手机。
+
+### 2026-10-26 CONFIGURED 读零语义更正
+
+核对 Synaptics《RMI4 Interfacing Guide》511-000136-01 Rev E，
+3.2.1 明确 F01 Control0 bit7 CONFIGURED 只写、读取恒为 0；
+3.3.1 的 F01 Data0 bit7 Unconfigured 才报告配置状态。
+Linux `drivers/input/rmi4/rmi_f01.c` 也在写 Control0 后读取 Device Status 确认。
+因此上一段 actual=00 是真实读数，但据此认定“配置位未保持/写入未生效”是错误推断，
+现予更正；旧证据仍保留。此前正常路径的 bit7=1 门槛、写后整字节比较，
+以及主机模型把 bit7 保持为 1 的行为均有相同错误。
+本轮仅改为检查 Control0 的睡眠/可读写位，并通过 Data0 实际状态验证配置；
+仍拒绝未配置、故障、传输失败及不支持的布局，不改写入时序或增加 PMIC 操作。
+模型按规范实现 CONFIGURED 读零，并覆盖与手机相同的 Ctrl28=ff、
+Control0=00、一次 CONFIGURED 写入后 Data0 清零的场景；49 项相关检查通过。
+原始规范出处记入 chiron_touch_sources.json，新镜像构建与实机结果待追加。

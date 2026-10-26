@@ -36,7 +36,7 @@ sensor_read(void *context, uint16_t address, uint8_t *out, size_t length)
     if (address == functions.f01.data && length == 1) {
         out[0] = (uint8_t)m.sensor_status;
     } else if (address == functions.f01.control && length == 1) {
-        out[0] = m.layout_case == 33 ? 0 : m.layout_case == 2 ? 0x81 : m.sensor_control;
+        out[0] = m.layout_case == 33 ? 1 : m.layout_case == 2 ? 0x81 : m.sensor_control;
     } else if (address == functions.f01.query && length == 21) {
         out[0] = m.layout_case == 3 ? 2 : 1;
     } else if (address == functions.f01.query + 18 && length == 3) {
@@ -132,7 +132,8 @@ sensor_write(void *context, uint16_t address, uint8_t value)
         m.report_enable = value;
     } else {
         assert(value == (m.sensor_control | 0x80u));
-        m.sensor_control = value;
+        /* RMI4 3.2.1: CONFIGURED reads zero, even after a successful write. */
+        m.sensor_control = value & 0x7fu;
         if (!m.stuck_reset)
             m.sensor_status = 0;
     }
@@ -145,7 +146,7 @@ setup(void)
     memset(&m, 0, sizeof(m));
     m.owned = 1;
     m.bitmap = 1;
-    m.sensor_control = 0x80;
+    m.sensor_control = 0;
     m.report_enable = 0xff;
     m.regs[CQ_STATE / 4] = 0x14;
     m.regs[CQ_IO_MODES / 4] = (2u << 2) | (2u << 7); /* 128-byte FIFOs */
@@ -514,9 +515,9 @@ layout(void)
     }
     setup(); m.layout_case = 33;
     assert(chiron_f12_validate(&reader, &functions, &result) == CHIRON_DSX_UNVERIFIED_LAYOUT);
-    assert(!strcmp(reader.refusal.field, "F01.Control0.configured/sleep"));
-    assert(reader.refusal.address == functions.f01.control && reader.refusal.actual[0] == 0);
-    assert(!strcmp(reader.refusal.expected, "(value & 0x83) == 0x80") && !m.writes);
+    assert(!strcmp(reader.refusal.field, "F01.Control0.sleep"));
+    assert(reader.refusal.address == functions.f01.control && reader.refusal.actual[0] == 1);
+    assert(!strcmp(reader.refusal.expected, "(value & 0x03) == 0 (awake)") && !m.writes);
     m.sensor_status = 0x80;
     assert(chiron_f12_validate(&reader, &functions, &result) == CHIRON_DSX_UNVERIFIED_LAYOUT);
     assert(!strcmp(reader.refusal.field, "F01.Data0.status")); /* First failed check wins. */
@@ -594,13 +595,19 @@ reset_initialization(void)
     setup(); m.sensor_status = 0x81; m.sensor_control = 0x0c; m.report_enable = 0x1f;
     assert(chiron_f12_validate(&reader, &functions, &result) < 0 && !m.sensor_writes);
     assert(chiron_f12_prepare(&reader, &functions, &result) == 0);
-    assert(result.contacts == 2 && m.sensor_status == 0 && m.sensor_control == 0x8c);
+    assert(result.contacts == 2 && m.sensor_status == 0 && m.sensor_control == 0x0c);
     assert(m.sensor_writes == 2 && reader.configuration_write_attempts == 2);
     assert(m.sensor_write_addresses[0] == functions.f12.control + 4 &&
         m.sensor_write_values[0] == 0xff);
     assert(m.sensor_write_addresses[1] == functions.f01.control &&
         m.sensor_write_values[1] == 0x8c);
     assert(chiron_f12_validate(&reader, &functions, &result) == 0 && m.sensor_writes == 2);
+    /* Exact phone profile: Ctrl28 already ff, Control0 reads 00 after CONFIGURED. */
+    setup(); m.sensor_status = 0x81;
+    assert(chiron_f12_prepare(&reader, &functions, &result) == 0);
+    assert(m.sensor_writes == 1 && m.sensor_control == 0 && m.sensor_status == 0);
+    assert(m.sensor_write_addresses[0] == functions.f01.control &&
+        m.sensor_write_values[0] == 0x80 && result.contacts == 2);
     for (int mode = 1; mode <= 28; mode++) {
         if (mode == 17 || mode == 22 || mode == 28)
             continue;
@@ -627,7 +634,7 @@ reset_initialization(void)
     setup(); m.sensor_status = 0x81; m.sensor_control = 0;
     m.stuck_reset = 1;
     assert(chiron_f12_prepare(&reader, &functions, &result) < 0 && m.sensor_writes == 1);
-    assert(!strcmp(reader.refusal.field, "F01.Data0.status") && !result.contacts);
+    assert(!strcmp(reader.refusal.field, "F01.Data0.status_after_configure") && !result.contacts);
     setup(); m.sensor_status = 0x81; m.sensor_control = 0;
     reader.write = NULL;
     assert(chiron_f12_prepare(&reader, &functions, &result) < 0 && !m.sensor_writes);
