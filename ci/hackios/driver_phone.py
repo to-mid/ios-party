@@ -94,6 +94,8 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
         if active:
             loader = proof.get("loader_overlay", {}).get("touch", {})
             if (touch.get("active_pinmux_prepare_implemented") is not True
+                    or touch.get("reset_sensor_initialization_implemented") is not True
+                    or proof.get("sensor_configuration_writes") is not True
                     or proof.get("qup_writes") is not True
                     or proof.get("reset_prepare") is not True
                     or loader.get("reset_retained_android_profile") is not True
@@ -102,8 +104,8 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
                     or proof.get("l6_abi", False)
                     or proof.get("l6_capture", False)):
                 raise ValueError("active touch requires pinmux, retained power/reset and QUP write proof")
-        elif proof.get("qup_writes", False):
-            raise ValueError("probe cannot request QUP writes")
+        elif proof.get("qup_writes", False) or proof.get("sensor_configuration_writes", False):
+            raise ValueError("probe cannot request QUP or sensor configuration writes")
         if type(proof.get("clock_prepare", False)) is not bool:
             raise ValueError("clock preparation mode must be an explicit boolean")
         if proof.get("clock_prepare", False):
@@ -181,6 +183,8 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
     if chosen["touch"] and proof.get("touch_active", False):
         if b"chiron touch: pinmux prepare result=" not in entries["kernel"]:
             raise ValueError("payload kernel lacks active pinmux preparation")
+        if b"chiron touch: reset initialization verified;" not in entries["kernel"]:
+            raise ValueError("payload kernel lacks reset sensor initialization")
     root = content_digest(entries["ramdisk"])
     if any(root[key] != inputs["small_root"][key] for key in root):
         raise ValueError("payload small root differs")
@@ -249,6 +253,8 @@ def verify_source(folder, variant, source_run, clock_prepare=False, pinmux_prepa
             raise ValueError("touch source build has no pinmux preparation")
         if touch_active and report.get("active_pinmux_prepare_implemented") is not True:
             raise ValueError("touch source build has no active pinmux preparation")
+        if touch_active and report.get("reset_sensor_initialization_implemented") is not True:
+            raise ValueError("touch source build has no reset sensor initialization")
     return proof
 
 
@@ -338,6 +344,7 @@ def main():
         "probe_only": chosen["touch"] and not args.touch_active,
         "touch_active": args.touch_active,
         "qup_writes": args.touch_active,
+        "sensor_configuration_writes": args.touch_active,
         "clock_prepare": args.clock_prepare,
         "clock_writes": args.clock_prepare,
         "pinmux_prepare": args.pinmux_prepare,

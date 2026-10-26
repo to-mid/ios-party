@@ -13,6 +13,9 @@ static struct {
     uint64_t elapsed_us;
     int owned, scenario, running, layout_case, sensor_status, bitmap;
     unsigned transactions, sensor_reads, bitmap_reads;
+    uint8_t sensor_control, report_enable, sensor_write_values[2];
+    uint16_t sensor_write_addresses[2];
+    unsigned sensor_writes, write_error, ignored_write, stuck_reset;
     uint32_t board_values[CB_REGISTER_COUNT], handoff[4];
     unsigned board_reads;
     int platform_bad, missing_handoff, read_error;
@@ -33,7 +36,7 @@ sensor_read(void *context, uint16_t address, uint8_t *out, size_t length)
     if (address == functions.f01.data && length == 1) {
         out[0] = (uint8_t)m.sensor_status;
     } else if (address == functions.f01.control && length == 1) {
-        out[0] = m.layout_case == 33 ? 0 : m.layout_case == 2 ? 0x81 : 0x80;
+        out[0] = m.layout_case == 33 ? 0 : m.layout_case == 2 ? 0x81 : m.sensor_control;
     } else if (address == functions.f01.query && length == 21) {
         out[0] = m.layout_case == 3 ? 2 : 1;
     } else if (address == functions.f01.query + 18 && length == 3) {
@@ -88,7 +91,7 @@ sensor_read(void *context, uint16_t address, uint8_t *out, size_t length)
             m.layout_case == 31 ? 10 : 2;
         if (m.layout_case == 18) out[2] = 4; /* Palm remapped as finger. */
     } else if (address == functions.f12.control + 4 && length == 1) {
-        out[0] = m.layout_case == 28 ? 0x1f : 0xff;
+        out[0] = m.layout_case == 28 ? 0x1f : m.report_enable;
     } else if (address == functions.f12.data + 1 && (length == 16 || length == 80)) {
         out[0] = 1;
         out[1] = 0xf4; out[2] = 1;
@@ -112,12 +115,38 @@ sensor_read(void *context, uint16_t address, uint8_t *out, size_t length)
     return (int)length;
 }
 
+static int
+sensor_write(void *context, uint16_t address, uint8_t value)
+{
+    assert(context == &m && m.sensor_writes < 2);
+    unsigned index = m.sensor_writes++;
+    m.sensor_write_addresses[index] = address;
+    m.sensor_write_values[index] = value;
+    assert(address == functions.f01.control || address == functions.f12.control + 4);
+    if (m.write_error == index + 1)
+        return -1;
+    if (m.ignored_write == index + 1)
+        return 0;
+    if (address == functions.f12.control + 4) {
+        assert(value == 0xff);
+        m.report_enable = value;
+    } else {
+        assert(value == (m.sensor_control | 0x80u));
+        m.sensor_control = value;
+        if (!m.stuck_reset)
+            m.sensor_status = 0;
+    }
+    return 0;
+}
+
 static void
 setup(void)
 {
     memset(&m, 0, sizeof(m));
     m.owned = 1;
     m.bitmap = 1;
+    m.sensor_control = 0x80;
+    m.report_enable = 0xff;
     m.regs[CQ_STATE / 4] = 0x14;
     m.regs[CQ_IO_MODES / 4] = (2u << 2) | (2u << 7); /* 128-byte FIFOs */
     m.regs[CQ_STATUS / 4] = 3u << 26;
@@ -141,8 +170,12 @@ execute_tags(void)
     assert(m.tx[0] == 0x81 && m.tx[1] == 0x40);
     if (output == 6) {
         assert(input == 0 && m.tx[2] == 0x83 && m.tx[3] == 2);
-        assert(m.tx[4] == 0xff && m.tx[5] < 5);
-        m.page = m.tx[5];
+        if (m.tx[4] == 0xff) {
+            assert(m.tx[5] < 5);
+            m.page = m.tx[5];
+        } else {
+            assert(sensor_write(&m, (uint16_t)((m.page << 8) | m.tx[4]), m.tx[5]) == 0);
+        }
     } else {
         assert(m.tx[2] == 0x82 && m.tx[3] == 1);
         assert(m.tx[5] == 0x81 && m.tx[6] == 0x41 && m.tx[7] == 0x87);
@@ -415,6 +448,8 @@ transactions(void)
     assert(chiron_qup_read(&q, 0x20, 0xff, out, 1) == CHIRON_QUP_UNSUPPORTED);
     assert(chiron_qup_read(&q, 0x20, 0, out, 81) == CHIRON_QUP_UNSUPPORTED);
     assert(chiron_qup_read(&q, 0x20, 0, NULL, 1) == CHIRON_QUP_UNSUPPORTED);
+    assert(chiron_qup_write_byte(&q, 0x38, 0x31, 0x80) == CHIRON_QUP_UNSUPPORTED);
+    assert(chiron_qup_write_byte(&q, 0x20, 0xff, 0) == CHIRON_QUP_UNSUPPORTED);
     assert(m.writes == before);
     setup(); m.regs[CQ_IO_MODES / 4] = 0; /* Smallest 32-byte FIFO. */
     assert(chiron_qup_open(&q, &ops) == 0 && q.input_bytes == 32);
@@ -548,6 +583,73 @@ pipeline(void)
 }
 
 static void
+reset_initialization(void)
+{
+    struct chiron_dsx_layout result;
+    struct chiron_f12_reader reader = {
+        .context = &m, .read = sensor_read, .write = sensor_write
+    };
+    setup();
+    assert(chiron_f12_prepare(&reader, &functions, &result) == 0 && !m.sensor_writes);
+    setup(); m.sensor_status = 0x81; m.sensor_control = 0x0c; m.report_enable = 0x1f;
+    assert(chiron_f12_validate(&reader, &functions, &result) < 0 && !m.sensor_writes);
+    assert(chiron_f12_prepare(&reader, &functions, &result) == 0);
+    assert(result.contacts == 2 && m.sensor_status == 0 && m.sensor_control == 0x8c);
+    assert(m.sensor_writes == 2 && reader.configuration_write_attempts == 2);
+    assert(m.sensor_write_addresses[0] == functions.f12.control + 4 &&
+        m.sensor_write_values[0] == 0xff);
+    assert(m.sensor_write_addresses[1] == functions.f01.control &&
+        m.sensor_write_values[1] == 0x8c);
+    assert(chiron_f12_validate(&reader, &functions, &result) == 0 && m.sensor_writes == 2);
+    for (int mode = 1; mode <= 28; mode++) {
+        if (mode == 17 || mode == 22 || mode == 28)
+            continue;
+        setup(); m.sensor_status = 0x81; m.sensor_control = 0; m.layout_case = mode;
+        assert(chiron_f12_prepare(&reader, &functions, &result) < 0 && !m.sensor_writes);
+        assert(!result.contacts);
+    }
+    for (unsigned status = 1; status <= 255; status++) {
+        if (status == 0x81)
+            continue;
+        setup(); m.sensor_status = (int)status;
+        assert(chiron_f12_prepare(&reader, &functions, &result) < 0 && !m.sensor_writes);
+    }
+    for (unsigned failure = 1; failure <= 2; failure++) {
+        setup(); m.sensor_status = 0x81; m.sensor_control = 0x0c; m.report_enable = 0x1f;
+        m.write_error = failure;
+        assert(chiron_f12_prepare(&reader, &functions, &result) == CHIRON_DSX_IO);
+        assert(m.sensor_writes == failure && !result.contacts);
+        setup(); m.sensor_status = 0x81; m.sensor_control = 0x0c; m.report_enable = 0x1f;
+        m.ignored_write = failure;
+        assert(chiron_f12_prepare(&reader, &functions, &result) < 0);
+        assert(m.sensor_writes == failure && !result.contacts && reader.refusal.field);
+    }
+    setup(); m.sensor_status = 0x81; m.sensor_control = 0;
+    m.stuck_reset = 1;
+    assert(chiron_f12_prepare(&reader, &functions, &result) < 0 && m.sensor_writes == 1);
+    assert(!strcmp(reader.refusal.field, "F01.Data0.status") && !result.contacts);
+    setup(); m.sensor_status = 0x81; m.sensor_control = 0;
+    reader.write = NULL;
+    assert(chiron_f12_prepare(&reader, &functions, &result) < 0 && !m.sensor_writes);
+    /* Exercise the actual QUP write tags and one-shot native callback together. */
+    struct chiron_native native;
+    struct chiron_dsx_bus bus;
+    struct chiron_dsx device;
+    struct chiron_qup_io ops = io();
+    setup(); m.sensor_status = 0x81; m.sensor_control = 0x0c; m.report_enable = 0x1f;
+    assert(chiron_native_bind(&native, &ops, 0, &bus) == 0);
+    posted = 0;
+    chiron_dsx_init(&device, &bus, post, &posted);
+    assert(chiron_dsx_start(&device) == 0 && m.sensor_writes == 2);
+    assert(chiron_dsx_poll(&device) == 0 && posted == 1);
+    m.sensor_status = 0x81;
+    assert(chiron_dsx_poll(&device) < 0 && posted == 2 && !device.ready);
+    assert(m.sensor_writes == 2 && m.barriers == m.writes);
+    setup(); m.owned = 0;
+    assert(chiron_native_bind(&native, &ops, 0, &bus) < 0 && !m.sensor_writes);
+}
+
+static void
 retained_pipeline(void)
 {
     struct chiron_board_report report;
@@ -618,6 +720,7 @@ int main(int argc, char **argv)
     case 6: elapsed_timeouts(); break;
     case 7: board_probe(); break;
     case 8: retained_pipeline(); break;
+    case 9: reset_initialization(); break;
     default: assert(0);
     }
     return 0;

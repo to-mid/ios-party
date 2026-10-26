@@ -75,6 +75,8 @@ def _overlay(root, prefix, manifest):
         "native_i2c_transport_implemented": True,
         "f12_layout_validator_implemented": True,
         "f12_first_refusal_report_implemented": True,
+        "reset_sensor_initialization_implemented": True,
+        "sensor_write_policy": "first-discovery-reset-0x81-only-validated-F12-Ctrl28-and-F01-Control0",
         "native_i2c_hardware_enabled": False,
         "board_probe_implemented": True,
         "loader_overlay_required_for_native": True,

@@ -24,10 +24,24 @@ cn_absolute_read(void *context, uint16_t address, uint8_t *data, size_t size)
 }
 
 static int
+cn_absolute_write(void *context, uint16_t address, uint8_t value)
+{
+    struct chiron_native *native = context;
+    int result = cn_select(context, 0x20, (uint8_t)(address >> 8));
+    if (result)
+        return result;
+    return chiron_qup_write_byte(&native->qup, 0x20, (uint8_t)address, value);
+}
+
+static int
 cn_validate(void *context, const struct chiron_dsx_functions *functions,
     struct chiron_dsx_layout *layout)
 {
     struct chiron_native *native = context;
+    if (!native->initialization_attempted) {
+        native->initialization_attempted = 1;
+        return chiron_f12_prepare(&native->reader, functions, layout);
+    }
     return chiron_f12_validate(&native->reader, functions, layout);
 }
 
@@ -43,7 +57,8 @@ chiron_native_bind(struct chiron_native *native, const struct chiron_qup_io *io,
     if (result)
         return result;
     native->reader = (struct chiron_f12_reader){
-        .context = native, .read = cn_absolute_read, .flip = flip
+        .context = native, .read = cn_absolute_read, .flip = flip,
+        .write = cn_absolute_write
     };
     *bus = (struct chiron_dsx_bus){native, cn_select, cn_read, cn_validate};
     return 0;

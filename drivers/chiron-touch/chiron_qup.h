@@ -54,8 +54,10 @@ struct chiron_qup {
 
 /* Single owner/thread. An error poisons the session; no automatic recovery. */
 int chiron_qup_open(struct chiron_qup *, const struct chiron_qup_io *);
-/* DSX bus callbacks. Only addr 0x20, page selector, and register reads exist. */
+/* DSX bus callbacks, restricted to addr 0x20 and supported register pages. */
 int chiron_qup_select_page(void *, uint8_t slave, uint8_t page);
 int chiron_qup_read(void *, uint8_t slave, uint8_t reg, uint8_t *, size_t);
+/* One register byte + STOP; the F12 initializer selects the two control addresses. */
+int chiron_qup_write_byte(void *, uint8_t slave, uint8_t reg, uint8_t value);
 
 #endif

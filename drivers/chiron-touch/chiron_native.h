@@ -7,6 +7,7 @@
 struct chiron_native {
     struct chiron_qup qup;
     struct chiron_f12_reader reader;
+    uint8_t initialization_attempted;
 };
 
 /*

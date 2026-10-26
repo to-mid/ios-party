@@ -256,3 +256,13 @@ chiron_qup_read(void *context, uint8_t slave, uint8_t reg, uint8_t *data, size_t
     const uint8_t tags[9] = {0x81, 0x40, 0x82, 1, reg, 0x81, 0x41, 0x87, (uint8_t)size};
     return cq_transfer(q, tags, sizeof(tags), data, size);
 }
+
+int
+chiron_qup_write_byte(void *context, uint8_t slave, uint8_t reg, uint8_t value)
+{
+    struct chiron_qup *q = context;
+    if (slave != 0x20 || reg == 0xff)
+        return CHIRON_QUP_UNSUPPORTED;
+    const uint8_t tags[6] = {0x81, 0x40, 0x83, 2, reg, value};
+    return cq_transfer(q, tags, sizeof(tags), NULL, 0);
+}

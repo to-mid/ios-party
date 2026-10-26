@@ -106,6 +106,9 @@ class NativeTransportTests(unittest.TestCase):
     def test_retained_board_ready_path_and_clock_loss_without_unsafe_cleanup(self):
         self.run_case(8)
 
+    def test_measured_reset_initialization_readback_and_no_recovery_during_poll(self):
+        self.run_case(9)
+
 
 class OverlayTests(unittest.TestCase):
     def setUp(self):
@@ -457,7 +460,8 @@ int main(void) {
         self.assertIn("hardware untouched", result.stdout)
         self.assertIn("read-only, no transport or worker", result.stdout)
         self.assertIn("F12 refusal field=F01.Control0.configured/sleep address=31 actual=00 "
-                      "expected=(value & 0x83) == 0x80; no sensor configuration writes", result.stdout)
+                      "expected=(value & 0x83) == 0x80; sensor configuration write attempts=0",
+                      result.stdout)
 
 
 class LoaderHandoffTests(unittest.TestCase):

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
- * Read-only subset of synaptics_dsx_force/synaptics_dsx_core.c at the pinned
+ * Restricted subset of synaptics_dsx_force/synaptics_dsx_core.c at the pinned
  * MSM8998 commit. Original driver Copyright (C) 2012-2015 Synaptics Incorporated,
  * Copyright (C) 2018 XiaoMi, Inc. Register parsing is bounds checked here.
  */
@@ -97,9 +97,9 @@ cf_control23_size(const uint8_t *query5, const uint8_t *structure,
     return CHIRON_DSX_UNVERIFIED_LAYOUT;
 }
 
-int
-chiron_f12_validate(void *context, const struct chiron_dsx_functions *functions,
-    struct chiron_dsx_layout *layout)
+static int
+cf_validate(void *context, const struct chiron_dsx_functions *functions,
+    struct chiron_dsx_layout *layout, int prepare)
 {
     struct chiron_f12_reader *reader = context;
     uint8_t f01[21], build_id[3], status, device_control, q5_size, q8_size;
@@ -107,6 +107,7 @@ chiron_f12_validate(void *context, const struct chiron_dsx_functions *functions,
     uint8_t control8[14], control23[5] = {0}, control28, control20[3];
     unsigned control23_size;
     int result;
+    struct chiron_dsx_layout pending;
     *layout = (struct chiron_dsx_layout){0};
     if (reader)
         reader->refusal = (struct chiron_f12_refusal){0};
@@ -124,12 +125,14 @@ chiron_f12_validate(void *context, const struct chiron_dsx_functions *functions,
 } while (0)
     CF_READ(functions->f01.data, 0, &status, 1);
     CF_READ(functions->f01.control, 0, &device_control, 1);
-    if (status != 0)
+    int reset = prepare && status == 0x81;
+    if (status != 0 && !reset)
         return cf_refuse(reader, "F01.Data0.status", functions->f01.data,
             &status, 1, "0x00");
-    if ((device_control & 0x83u) != 0x80u)
+    if ((device_control & (reset ? 3u : 0x83u)) != (reset ? 0u : 0x80u))
         return cf_refuse(reader, "F01.Control0.configured/sleep", functions->f01.control,
-            &device_control, 1, "(value & 0x83) == 0x80");
+            &device_control, 1, reset ? "(value & 0x03) == 0 (awake)" :
+            "(value & 0x83) == 0x80");
     CF_READ(functions->f01.query, 0, f01, sizeof(f01));
     /* Upstream reads the build ID separately from the standard query burst. */
     CF_READ(functions->f01.query, 18, build_id, sizeof(build_id));
@@ -171,12 +174,12 @@ chiron_f12_validate(void *context, const struct chiron_dsx_functions *functions,
     CF_READ(functions->f12.control, cf_offset(q5, 23), control23, control23_size);
     CF_READ(functions->f12.control, cf_offset(q5, 28), &control28, 1);
     /*
-     * Vendor enables TYPE/X/Y/Z/WX/WY by writing 0xff to Ctrl28. We only
-     * accept it already enabled. Do not rewrite controls to make a device fit.
+     * Vendor enables TYPE/X/Y/Z/WX/WY by writing 0xff to Ctrl28. Only the
+     * first reset initialization may do this, after every layout check passes.
      * Optional Ctrl23 subpackets are described by Query6. Reject mappings
      * that relabel another object class as a finger.
      */
-    if (control28 != 0xff)
+    if (control28 != 0xff && !reset)
         return cf_refuse(reader, "F12.Control28.report_enable",
             functions->f12.control + cf_offset(q5, 28), &control28, 1, "0xff");
     if (control20[2] != 0)
@@ -202,10 +205,10 @@ chiron_f12_validate(void *context, const struct chiron_dsx_functions *functions,
             "nonzero max X/Y; all contact bytes below page selector");
     /* Status/ready must also remain valid after the control/query reads. */
     CF_READ(functions->f01.data, 0, &status, 1);
-    if (status != 0)
+    if (status != (reset ? 0x81 : 0))
         return cf_refuse(reader, "F01.Data0.status_after_queries", functions->f01.data,
-            &status, 1, "0x00");
-    *layout = (struct chiron_dsx_layout){
+            &status, 1, reset ? "0x81 (unchanged reset/unconfigured)" : "0x00");
+    pending = (struct chiron_dsx_layout){
         .f12 = functions->f12, .data1 = (uint16_t)(functions->f12.data + offset),
         .max_x = max_x, .max_y = max_y, .object_bytes = 8,
         .contacts = control23[1], .flip = reader->flip
@@ -218,9 +221,57 @@ chiron_f12_validate(void *context, const struct chiron_dsx_functions *functions,
         if (data15_offset + bytes > 0xffu - (functions->f12.data & 0xffu))
             return cf_refuse(reader, "F12.Query8.Data15_bounds", functions->f12.query + 8,
                 q8, q8_size, "Data15 bytes below page selector");
-        layout->data15 = (uint16_t)(functions->f12.data + data15_offset);
-        layout->data15_bytes = (uint8_t)bytes;
+        pending.data15 = (uint16_t)(functions->f12.data + data15_offset);
+        pending.data15_bytes = (uint8_t)bytes;
     }
+    if (reset) {
+        if (!reader->write)
+            return cf_refuse(reader, "F01.reset_initialization", functions->f01.control,
+                NULL, 0, "explicit control-write transport");
+        uint16_t report_address = (uint16_t)(functions->f12.control + cf_offset(q5, 28));
+        if (control28 != 0xff) {
+            reader->configuration_write_attempts++;
+            if (reader->write(reader->context, report_address, 0xff))
+                return CHIRON_DSX_IO;
+            CF_READ(report_address, 0, &control28, 1);
+            if (control28 != 0xff)
+                return cf_refuse(reader, "F12.Control28.readback", report_address,
+                    &control28, 1, "0xff");
+        }
+        /* Re-read before the vendor's read/modify/write; preserve all other bits. */
+        CF_READ(functions->f01.data, 0, &status, 1);
+        if (status != 0x81)
+            return cf_refuse(reader, "F01.Data0.status_before_configure", functions->f01.data,
+                &status, 1, "0x81");
+        CF_READ(functions->f01.control, 0, &device_control, 1);
+        if (device_control & 3u)
+            return cf_refuse(reader, "F01.Control0.sleep_before_configure", functions->f01.control,
+                &device_control, 1, "(value & 0x03) == 0 (awake)");
+        uint8_t configured = device_control | 0x80u;
+        reader->configuration_write_attempts++;
+        if (reader->write(reader->context, functions->f01.control, configured))
+            return CHIRON_DSX_IO;
+        CF_READ(functions->f01.control, 0, &device_control, 1);
+        if (device_control != configured)
+            return cf_refuse(reader, "F01.Control0.configured_readback", functions->f01.control,
+                &device_control, 1, "written Control0 with CONFIGURED bit set");
+        return cf_validate(reader, functions, layout, 0);
+    }
+    *layout = pending;
 #undef CF_READ
     return 0;
+}
+
+int
+chiron_f12_validate(void *context, const struct chiron_dsx_functions *functions,
+    struct chiron_dsx_layout *layout)
+{
+    return cf_validate(context, functions, layout, 0);
+}
+
+int
+chiron_f12_prepare(void *context, const struct chiron_dsx_functions *functions,
+    struct chiron_dsx_layout *layout)
+{
+    return cf_validate(context, functions, layout, 1);
 }

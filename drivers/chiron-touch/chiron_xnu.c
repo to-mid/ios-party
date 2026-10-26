@@ -473,7 +473,8 @@ chiron_layout_refusal_report(void)
         r->field, (unsigned)r->address);
     for (unsigned i = 0; i < r->bytes; i++)
         printf("%02x%s", (unsigned)r->actual[i], i + 1 == r->bytes ? "" : " ");
-    printf(" expected=%s; no sensor configuration writes\n", r->expected);
+    printf(" expected=%s; sensor configuration write attempts=%u\n",
+        r->expected, (unsigned)chiron_native.reader.configuration_write_attempts);
 }
 
 static void
@@ -509,6 +510,8 @@ chiron_touch_thread(void *parameter, wait_result_t result)
         thread_terminate(current_thread());
         return;
     }
+    printf("chiron touch: reset initialization verified; sensor configuration write attempts=%u\n",
+        (unsigned)chiron_native.reader.configuration_write_attempts);
     printf("chiron touch: verified DSX layout, polling every 20 ms\n");
     for (;;) {
         /* Thread context is required by redwood_touch_post's mutex/queue. */

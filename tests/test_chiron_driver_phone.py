@@ -87,6 +87,7 @@ def active_fixture():
     proof, inputs, payload = clock_fixture()
     entries = phone.payload_entries(payload)
     entries["kernel"] += b"CHIRON TOUCH PINMUX PROBE chiron touch: pinmux prepare result="
+    entries["kernel"] += b"chiron touch: reset initialization verified;"
     proof["command_line"] = ("cpus=1 epoch=1792760000 chiron_touch=1 chiron_touch_reset=1"
                              " loader_return_after=60 touch_lat=1")
     entries["cmdline"] = proof["command_line"].encode() + b"\0"
@@ -95,12 +96,14 @@ def active_fixture():
     proof["kernel"] = kernel
     proof["source_build"]["artifacts"]["kernel.development.hackios"] = kernel
     proof["source_build"]["overlays"]["kernel"]["changes"]["touch"].update(
-        pinmux_prepare_implemented=True, active_pinmux_prepare_implemented=True)
+        pinmux_prepare_implemented=True, active_pinmux_prepare_implemented=True,
+        reset_sensor_initialization_implemented=True)
     proof["loader_overlay"]["touch"] = {
         "reset_prepare_implemented": True, "reset_retained_android_profile": True,
         "reset_power_probe_after_usb_start": True,
     }
     proof.update(probe_only=False, touch_active=True, qup_writes=True,
+                 sensor_configuration_writes=True,
                  pinmux_prepare=True, pinmux_writes=True, reset_prepare=True, reset_writes=True)
     inputs["payload"] = phone.content_digest(payload)
     return proof, inputs, payload
@@ -112,6 +115,7 @@ class ExperimentAdmissionTests(unittest.TestCase):
         phone.admit_qualification(proof, inputs, payload, True)
         for key, value in (("touch_active", False), ("touch_active", "true"),
                            ("probe_only", True), ("qup_writes", False),
+                           ("sensor_configuration_writes", False),
                            ("pinmux_writes", False), ("reset_prepare", False),
                            ("read_only", True), ("power_writes", True), ("l6_abi", True)):
             altered = copy.deepcopy(proof)
@@ -125,6 +129,11 @@ class ExperimentAdmissionTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(ValueError):
                 phone.admit_qualification(
                     altered, dict(inputs, driver_experiment=altered), payload, True)
+        altered = copy.deepcopy(proof)
+        altered["source_build"]["overlays"]["kernel"]["changes"]["touch"][
+            "reset_sensor_initialization_implemented"] = False
+        with self.assertRaises(ValueError):
+            phone.admit_qualification(altered, dict(inputs, driver_experiment=altered), payload, True)
         proof["source_build"]["overlays"]["kernel"]["changes"]["touch"][
             "active_pinmux_prepare_implemented"] = False
         with self.assertRaisesRegex(ValueError, "active touch"):

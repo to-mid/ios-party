@@ -861,3 +861,54 @@ ASan/UBSan 模型覆盖未配置、状态优先拒绝、Ctrl28 掩码不符和�
 实际 adapter 日志格式及 ARM64 loader 编译通过。需要云端重建变动后的内核。
 去除 -v 的中间打包 `40194806791` 已完成；最终只交付合并字段诊断的新候选，
 避免同时上机多个版本。只有真机明确指向复位后初始化缺失，才进入最小初始化修复。
+
+### 2026-10-26 字段诊断候选交付
+
+源构建 `40251744841` 和打包 `40252134024` 已完成，均绑定提交
+`b5203aaf6136174b08a6fe92d1802cc5770bb2ee`。新内核与 loader 已链接，
+未定义符号表为空，全部触摸 overlay 哈希与本地源码一致；实际内核包含
+首个拒绝字段/地址/原始值/预期条件的日志。源检查 80 项中 64 通过、16 跳过，
+打包检查 23 项通过。总 make 仍因既有 check_all_exports 和
+IOKit/Libkern/Private.symbolset 错误返回 2，不声明全部上游目标通过。
+候选为 `dist/chiron-driver-candidates/TOUCH-ACTIVE-40252134024/MIX2-EXPERIMENTAL-TOUCH-ACTIVE.img`，
+SHA-256 `c00e7b7ab350ae879e52f52efe70a7d11d0cbd6f4078654e6ee4e77aa8514afe`；
+内核 SHA-256 `832459d2b4b1ae5a9bded1f2fc4582f7f76560b95ef49d5c0625bb05350c48cb`。
+本地容器 SHA-256/legacy SHA-1、FAT/ARM64、源码/参数/容量绑定通过；
+固件、DTB、入口与 HK6c 一致。实际参数已去掉 `-v`，保留 60 秒返回及触点日志。
+同目录 START 给出两阶段命令；返回后直接 get_staged 至
+`out/chiron-touch-f12-refusal-40252134024.log`，不先执行 oem log。
+本轮无新 QEMU 或设备操作；剩余阻塞为真机首个拒绝字段及触点响应。
+
+交付后只读 USB 取回 `out/chiron-touch-f12-refusal-40252134024.log`，
+615 字节，SHA-256 `4b124808521891d900fb02feb9356f8df3cb9bbbf4b2b1c74b623ae4f89c0c15`。
+内容仅为供电前检 ready=1/preflight=1、reset 保持低；`getvar result=idle`，
+没有内核或 F01/F12 记录。此前候选也会产生相同前检内容，不能据此独立确认
+本次镜像身份或新内核运行。仍需用户执行 START 第二阶段，再于返回后读取完整日志。
+本次未上传系统卷、启动内核或重启设备。
+
+用户随后运行第二阶段，再次只读取回
+`out/chiron-touch-f12-refusal-40252134024-round2.log`，239088 字节，
+SHA-256 `86c2becf7254e53e40941090af52508e9e42ff380322af6b73971d9bad5b372b`，
+含 END OF LOG；`getvar result=returned 237303 0`。参数与本轮候选一致，
+reset/clock/pinmux/board 均通过，PDT discovered=1。首次拒绝明确为
+`F01.Data0.status address=6 actual=81 expected=0x00`，线程停止，未进入 F12 布局检查及触点轮询。
+固定厂商源码将 bit7 定义为 unconfigured、低四位 1 定义为 RESET_OCCURRED；
+实测支持传感器复位后未配置，不证明仅写 CONFIGURED 即足以恢复全部上报。
+launchd/SpringBoard 已运行，backboardd 记录 Apple Logo 与 framebuffer swap；
+未见桌面完成显示的明确证据。`loader_return_after expired` 确认本次因预设
+60 秒计时返回 loader，不能将返回解释为触摸拒绝引发内核崩溃。
+下一最小实验为按固定厂商流程处理复位后的初始化并回读验证，保留未知状态拒绝；
+桌面显示另需观察。本次助手仅取日志和查询，未运行、上传或重启手机。
+
+### 2026-10-26 复位后的最小传感器初始化
+
+针对实测 F01 `0x81`，正常触摸首次发现增加一次初始化：先验证厂商/build、
+完整受支持的 F12 query/control、触点范围和对象格式，再按固定厂商流程
+按需写 Ctrl28=`ff`，最后读改写 F01 Control0 的 CONFIGURED bit7，
+保留其他位；控制值回读及原有严格布局/状态校验全部通过才开始轮询。
+只允许首次发现的 `0x81` 且 awake 状态进入此路径，未知状态/身份/布局在写前拒绝；
+轮询中再次复位仍释放触点并停止。供电、GPIO/时钟与 60 秒返回参数不变。
+打包证明新增显式 sensor_configuration_writes，并要求新源码标志和实际内核字符串。
+本地相关 49 项检查通过，含 ASan/UBSan 的两地址写入次序、保留控制位、
+写入失败/忽略写入/状态未恢复，以及真实 QUP 写 tag 到首次轮询与后续复位停止。
+云端新内核及打包待追加，本段不授予实机触摸资格。
