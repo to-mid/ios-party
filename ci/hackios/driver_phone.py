@@ -81,6 +81,24 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
     if type(capture) is not bool or (capture and
             (desktop or not chosen["touch"] or proof.get("touch_active") is not True)):
         raise ValueError("touch capture requires a separate active capture experiment")
+    replay = proof.get("touch_hid_replay", False)
+    if type(replay) is not bool or (replay and
+            (not chosen["touch"] or desktop or capture or proof.get("touch_active", False))):
+        raise ValueError("HID replay requires a separate touch experiment without a physical producer")
+    if replay:
+        replay_proof = proof.get("hid_replay", {})
+        if (replay_proof.get("schema") != "chiron-touch-hid-replay-v1"
+                or replay_proof.get("synthetic") is not True
+                or replay_proof.get("consumer_ready_assumed") is not False
+                or replay_proof.get("gesture_count") != 1
+                or replay_proof.get("physical_touch_qualified") is not False
+                or replay_proof.get("logical_readback_changed") != ["/bin/rwtouch", "/etc/rc.jobs"]
+                or any(proof.get(key, False) for key in
+                       ("clock_prepare", "pinmux_prepare", "reset_prepare", "l6_prepare",
+                        "l6_abi", "l6_capture", "qup_writes", "sensor_configuration_writes"))
+                or any(replay_proof.get("root", {}).get(k) != inputs["small_root"][k]
+                       for k in ("bytes", "sha256"))):
+            raise ValueError("HID replay lacks isolated producer or root readback proof")
     source = proof["source_build"]
     if (source.get("schema") != "chiron-driver-build-v1" or source.get("variant") != chosen["variant"]
             or source.get("cpu_count") != chosen["cpu_count"]):
@@ -97,7 +115,7 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
         if type(active) is not bool:
             raise ValueError("active touch mode must be an explicit boolean")
         if (source.get("touch") is not True or touch.get("board_probe_implemented") is not True
-                or proof.get("probe_only") is not (not active)):
+                or proof.get("probe_only") is not (not active and not replay)):
             raise ValueError("touch image requires the board probe implementation")
         if active:
             loader = proof.get("loader_overlay", {}).get("touch", {})
@@ -213,7 +231,8 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
     command = entries["cmdline"]
     pattern = rb"cpus=" + str(chosen["cpu_count"]).encode() + rb" epoch=[0-9]+"
     if chosen["touch"]:
-        pattern += (rb" chiron_touch=1" if proof.get("touch_active", False)
+        pattern += (rb" chiron_touch=0 loader_return_after=180 touch_lat=1" if replay
+                    else rb" chiron_touch=1" if proof.get("touch_active", False)
                     else rb" -v chiron_touch_pinmux_probe=1" if proof.get("pinmux_prepare", False)
                     else rb" -v chiron_touch_clock_probe=1" if proof.get("clock_prepare", False)
                     else rb" -v chiron_touch_probe=1")
@@ -304,11 +323,18 @@ def main():
                         help="Active touch with persistent graphics; no timed return to loader")
     parser.add_argument("--touch-capture", action="store_true",
                         help="Observe existing touch reads in graphics mode and return after 300 seconds")
+    parser.add_argument("--touch-hid-replay-root", type=Path,
+                        help="Explicit synthetic replay root; disables the physical touch producer")
     args = parser.parse_args()
     import apply_chiron_smp
     import cloud
 
     cloud.require_runner()
+    if args.touch_hid_replay_root and (
+            args.variant != "touch" or any((args.touch_active, args.touch_capture,
+            args.touch_desktop, args.clock_prepare, args.pinmux_prepare, args.reset_prepare,
+            args.l6_prepare, args.l6_abi, args.l6_capture))):
+        parser.error("HID replay requires touch and no physical touch/probe preparations")
     if args.touch_capture and args.touch_desktop:
         parser.error("--touch-capture and --touch-desktop are separate experiments")
     if args.touch_desktop or args.touch_capture:
@@ -339,6 +365,14 @@ def main():
     if root != inputs["small_root"]:
         raise ValueError("the qualified userland small root differs")
     shutil.copytree(base, args.output)
+    hid_replay = None
+    if args.touch_hid_replay_root:
+        folder = args.touch_hid_replay_root
+        hid_replay = json.loads((folder / "hid-replay.json").read_text())
+        if (hid_replay["baseline_root"] != root
+                or hid_replay["root"] != cloud.digest(folder / "root.apfs")):
+            raise ValueError("HID replay root or its original baseline differs")
+        shutil.copy2(folder / "root.apfs", args.output / "root.apfs")
     cloud.command([sys.executable, HERE / "phone_loader.py", "--work", args.work,
                    "--phone", args.output])
     if chosen["touch"]:
@@ -352,7 +386,8 @@ def main():
     shutil.copy2(args.work / "xnuloader/loader.efi", args.output / "loader.efi")
     command_line = f"{apply_chiron_smp.command_line(chosen['cpu_count'])} epoch={int(time.time())}"
     if chosen["touch"]:
-        command_line += (" chiron_touch=1" if args.touch_active
+        command_line += (" chiron_touch=0 loader_return_after=180 touch_lat=1" if hid_replay
+                         else " chiron_touch=1" if args.touch_active
                          else " -v chiron_touch_pinmux_probe=1" if args.pinmux_prepare
                          else " -v chiron_touch_clock_probe=1" if args.clock_prepare
                          else " -v chiron_touch_probe=1")
@@ -371,6 +406,7 @@ def main():
     inputs = json.loads((args.output / "inputs.json").read_text())
     inputs["loader"] = cloud.digest(args.output / "loader.efi")
     inputs["payload"] = cloud.digest(args.output / "payload.bin")
+    inputs["small_root"] = cloud.digest(args.output / "root.apfs")
     inputs["profile"]["cpu_count"] = chosen["cpu_count"]
     inputs["hardware_boot_qualified"] = False
     inputs["phone_loader_source_sha256"] = digest(args.work / "xnuloader/loader.c")["sha256"]
@@ -378,10 +414,12 @@ def main():
         "schema": SCHEMA, "variant": args.variant, "cpu_count": chosen["cpu_count"],
         "source_build": source, "kernel": digest(kernel), "loader_overlay": overlay,
         "command_line": command_line, "packaging_project_sha": os.environ["GITHUB_SHA"],
-        "probe_only": chosen["touch"] and not args.touch_active,
+        "probe_only": chosen["touch"] and not args.touch_active and not bool(hid_replay),
         "touch_active": args.touch_active,
         "touch_desktop": args.touch_desktop,
         "touch_capture": args.touch_capture,
+        "touch_hid_replay": bool(hid_replay),
+        "hid_replay": hid_replay,
         "qup_writes": args.touch_active,
         "sensor_configuration_writes": args.touch_active,
         "clock_prepare": args.clock_prepare,

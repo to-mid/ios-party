@@ -113,6 +113,33 @@ def active_fixture():
 
 
 class ExperimentAdmissionTests(unittest.TestCase):
+    def test_hid_replay_is_explicit_synthetic_and_excludes_the_physical_producer(self):
+        proof, inputs, payload = touch_fixture(
+            "cpus=1 epoch=1792760000 chiron_touch=0 loader_return_after=180 touch_lat=1")
+        proof.update(probe_only=False, touch_hid_replay=True)
+        proof["hid_replay"] = {
+            "schema": "chiron-touch-hid-replay-v1",
+            "synthetic": True, "consumer_ready_assumed": False, "gesture_count": 1,
+            "physical_touch_qualified": False,
+            "logical_readback_changed": ["/bin/rwtouch", "/etc/rc.jobs"],
+            "root": inputs["small_root"],
+        }
+        phone.admit_qualification(proof, inputs, payload, True)
+        for key, value in (("touch_active", True), ("reset_prepare", True),
+                           ("qup_writes", True), ("touch_capture", True),
+                           ("touch_hid_replay", False)):
+            bad = copy.deepcopy(proof)
+            bad[key] = value
+            with self.assertRaises(ValueError, msg=key):
+                phone.admit_qualification(bad, {**inputs, "driver_experiment": bad}, payload, True)
+        for key, value in (("consumer_ready_assumed", True), ("gesture_count", 2),
+                           ("physical_touch_qualified", True),
+                           ("logical_readback_changed", ["/etc/rc.jobs"])):
+            bad = copy.deepcopy(proof)
+            bad["hid_replay"][key] = value
+            with self.assertRaises(ValueError, msg=key):
+                phone.admit_qualification(bad, {**inputs, "driver_experiment": bad}, payload, True)
+
     def test_capture_requires_new_observer_and_explicit_five_minute_graphics_mode(self):
         proof, inputs, payload = active_fixture()
         entries = phone.payload_entries(payload)

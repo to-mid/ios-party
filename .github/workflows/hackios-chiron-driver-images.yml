@@ -8,7 +8,7 @@ on:
         type: choice
         required: true
         default: smp
-        options: [smp, touch-probe, touch-clock-probe, touch-pinmux-probe, touch-reset-probe, touch-l6-probe, touch-l6-trace, touch-l6-abi, touch-l6-capture, touch-active, touch-desktop, touch-capture]
+        options: [smp, touch-probe, touch-clock-probe, touch-pinmux-probe, touch-reset-probe, touch-l6-probe, touch-l6-trace, touch-l6-abi, touch-l6-capture, touch-active, touch-desktop, touch-capture, touch-hid-replay]
       touch_source_run:
         description: Successful touch source build run for touch-probe
         type: string
@@ -20,7 +20,7 @@ permissions:
 
 jobs:
   image:
-    name: Experimental ${{ inputs.variant == 'touch-capture' && 'TOUCH-CAPTURE' || inputs.variant == 'touch-desktop' && 'TOUCH-DESKTOP' || inputs.variant == 'touch-active' && 'TOUCH-ACTIVE' || inputs.variant == 'touch-l6-abi' && 'TOUCH-L6-ABI' || inputs.variant == 'touch-l6-trace' && 'TOUCH-L6-TRACE' || inputs.variant == 'touch-l6-probe' && 'TOUCH-L6-PROBE' || inputs.variant == 'touch-reset-probe' && 'TOUCH-RESET-PROBE' || inputs.variant == 'touch-pinmux-probe' && 'TOUCH-PINMUX-PROBE' || inputs.variant == 'touch-clock-probe' && 'TOUCH-CLOCK-PROBE' || inputs.variant == 'touch-probe' && 'TOUCH-PROBE' || format('SMP{0}', matrix.cpu_count) }}
+    name: Experimental ${{ inputs.variant == 'touch-hid-replay' && 'TOUCH-HID-REPLAY' || inputs.variant == 'touch-capture' && 'TOUCH-CAPTURE' || inputs.variant == 'touch-desktop' && 'TOUCH-DESKTOP' || inputs.variant == 'touch-active' && 'TOUCH-ACTIVE' || inputs.variant == 'touch-l6-abi' && 'TOUCH-L6-ABI' || inputs.variant == 'touch-l6-trace' && 'TOUCH-L6-TRACE' || inputs.variant == 'touch-l6-probe' && 'TOUCH-L6-PROBE' || inputs.variant == 'touch-reset-probe' && 'TOUCH-RESET-PROBE' || inputs.variant == 'touch-pinmux-probe' && 'TOUCH-PINMUX-PROBE' || inputs.variant == 'touch-clock-probe' && 'TOUCH-CLOCK-PROBE' || inputs.variant == 'touch-probe' && 'TOUCH-PROBE' || format('SMP{0}', matrix.cpu_count) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     strategy:
@@ -32,7 +32,7 @@ jobs:
       PYTHONDONTWRITEBYTECODE: '1'
       DRIVER_VARIANT: ${{ startsWith(inputs.variant, 'touch-') && 'touch' || format('smp{0}', matrix.cpu_count) }}
       SOURCE_RUN: ${{ startsWith(inputs.variant, 'touch-') && inputs.touch_source_run || '39964860075' }}
-      IMAGE_LABEL: ${{ inputs.variant == 'touch-capture' && 'TOUCH-CAPTURE' || inputs.variant == 'touch-desktop' && 'TOUCH-DESKTOP' || inputs.variant == 'touch-active' && 'TOUCH-ACTIVE' || inputs.variant == 'touch-l6-capture' && 'TOUCH-L6-CAPTURE' || inputs.variant == 'touch-l6-abi' && 'TOUCH-L6-ABI' || inputs.variant == 'touch-l6-trace' && 'TOUCH-L6-TRACE' || inputs.variant == 'touch-l6-probe' && 'TOUCH-L6-PROBE' || inputs.variant == 'touch-reset-probe' && 'TOUCH-RESET-PROBE' || inputs.variant == 'touch-pinmux-probe' && 'TOUCH-PINMUX-PROBE' || inputs.variant == 'touch-clock-probe' && 'TOUCH-CLOCK-PROBE' || inputs.variant == 'touch-probe' && 'TOUCH-PROBE' || format('SMP{0}', matrix.cpu_count) }}
+      IMAGE_LABEL: ${{ inputs.variant == 'touch-hid-replay' && 'TOUCH-HID-REPLAY' || inputs.variant == 'touch-capture' && 'TOUCH-CAPTURE' || inputs.variant == 'touch-desktop' && 'TOUCH-DESKTOP' || inputs.variant == 'touch-active' && 'TOUCH-ACTIVE' || inputs.variant == 'touch-l6-capture' && 'TOUCH-L6-CAPTURE' || inputs.variant == 'touch-l6-abi' && 'TOUCH-L6-ABI' || inputs.variant == 'touch-l6-trace' && 'TOUCH-L6-TRACE' || inputs.variant == 'touch-l6-probe' && 'TOUCH-L6-PROBE' || inputs.variant == 'touch-reset-probe' && 'TOUCH-RESET-PROBE' || inputs.variant == 'touch-pinmux-probe' && 'TOUCH-PINMUX-PROBE' || inputs.variant == 'touch-clock-probe' && 'TOUCH-CLOCK-PROBE' || inputs.variant == 'touch-probe' && 'TOUCH-PROBE' || format('SMP{0}', matrix.cpu_count) }}
       CLOCK_PREPARE: ${{ inputs.variant == 'touch-clock-probe' && '1' || '0' }}
       PINMUX_PREPARE: ${{ inputs.variant == 'touch-pinmux-probe' && '1' || '0' }}
       RESET_PREPARE: ${{ inputs.variant == 'touch-reset-probe' && '1' || '0' }}
@@ -42,6 +42,7 @@ jobs:
       TOUCH_ACTIVE: ${{ (inputs.variant == 'touch-active' || inputs.variant == 'touch-desktop' || inputs.variant == 'touch-capture') && '1' || '0' }}
       TOUCH_DESKTOP: ${{ inputs.variant == 'touch-desktop' && '1' || '0' }}
       TOUCH_CAPTURE: ${{ inputs.variant == 'touch-capture' && '1' || '0' }}
+      TOUCH_HID_REPLAY: ${{ inputs.variant == 'touch-hid-replay' && '1' || '0' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -49,12 +50,13 @@ jobs:
       - name: Install EFI and FAT tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang lld llvm mtools dosfstools
+          sudo apt-get install -y --no-install-recommends clang lld llvm mtools dosfstools libtinfo6
       - name: Test explicit experiment qualification and payload bindings
         run: |
           python3 -B -m unittest discover -s tests -p 'test_chiron_driver_phone.py' -v
           python3 -B -m unittest discover -s tests -p 'test_chiron_touch_reset.py' -v
           python3 -B -m unittest discover -s tests -p 'test_chiron_l6_capture.py' -v
+          python3 -B -m unittest discover -s tests -p 'test_chiron_touch_hid.py' -v
       - name: Download the source build and unchanged boot inputs
         run: |
           case "$SOURCE_RUN" in *[!0-9]*|'') exit 2;; esac
@@ -68,6 +70,13 @@ jobs:
             --name chiron-source-trace-39770335838-1 --dir dist/chiron-boot-template
           gh run download 39922183783 --repo "$GITHUB_REPOSITORY" \
             --name chiron-hackios-39922183783 --dir dist/chiron-runtime
+      - name: Build only the explicit synthetic producer and small diagnostic root
+        if: inputs.variant == 'touch-hid-replay'
+        run: |
+          python3 ci/hackios/apply_chiron_touch_hid.py build \
+            --baseline dist/chiron-runtime/phone/root.apfs \
+            --work "$RUNNER_TEMP/chiron-hid-build" \
+            --output "$GITHUB_WORKSPACE/dist/chiron-hid-root"
       - name: Compile the phone loader and bind the fresh kernel payload
         run: |
           EXTRA_ARGS=()
@@ -80,6 +89,7 @@ jobs:
           if [ "$TOUCH_ACTIVE" = 1 ]; then EXTRA_ARGS+=(--touch-active); fi
           if [ "$TOUCH_DESKTOP" = 1 ]; then EXTRA_ARGS+=(--touch-desktop); fi
           if [ "$TOUCH_CAPTURE" = 1 ]; then EXTRA_ARGS+=(--touch-capture); fi
+          if [ "$TOUCH_HID_REPLAY" = 1 ]; then EXTRA_ARGS+=(--touch-hid-replay-root "$GITHUB_WORKSPACE/dist/chiron-hid-root"); fi
           python3 ci/hackios/driver_phone.py \
             --source-build dist/driver-source --source-run "$SOURCE_RUN" \
             --runtime dist/chiron-runtime --variant "$DRIVER_VARIANT" \
@@ -105,5 +115,6 @@ jobs:
             dist/driver-image/
             dist/driver-phone/driver-experiment.json
             dist/driver-phone/inputs.json
+            dist/chiron-hid-root/hid-replay.json
           retention-days: 7
           compression-level: 1
