@@ -1266,3 +1266,39 @@ loader_return_after=300 touch_lat=1`。小启动卷仅将 rc.jobs 替换为
 原 rwtouch、内核、固件及大系统卷复用；云端只重打小卷及必要启动容器。
 逐条读回仅允许 `/etc/rc.jobs` 改变，参数/资格检查拒绝与合成重放混用。
 本地相关检查及语法通过；云端打包与真实触点观察待完成，不修改 sensor 或显示电源。
+
+云端 `40307818534` 成功，提交 `0778bfd43a9c823cb20917fd1bb3ee088b544e7b`；
+交付 `dist/chiron-driver-candidates/TOUCH-CAPTURE-WAKE-40307818534/MIX2-EXPERIMENTAL-TOUCH-CAPTURE-WAKE.img`，
+SHA-256 `e9408c3bac898e3f0eb8aff0d6f6cf49e4c76ac1997d3b376894fffba59a27a9`。
+28 项本地相关检查、Python/工作流语法及云端必需检查/打包通过。
+本地容器/FAT/EFI/参数/容量绑定通过，实际参数开启 DSX/reset/capture、300 秒返回，
+HOME 任务哈希与产物匹配，逐条回读仅 rc.jobs 变更。原内核/重放工具/大系统卷复用，
+固件/DTB/入口/profile 及 loader 源码与原采样版相同。
+本轮无新内核或重放工具编译、QEMU 或手机操作。START 给出真实单指十秒操作，
+返回后直接读取 `out/chiron-touch-capture-wake-40307818534-run1.log`。
+唯一待验收为本轮真实 Data15/Data1、解析及事件链路的实机结果。
+
+### 2026-10-26 首次确认真实输入，定位位图换帧误停
+
+只读取得 `out/chiron-touch-capture-wake-40307818534-run1.log`，1441560 字节，
+SHA-256 `31d6f51cc9e3aec8bde902b1dcd3e3361e688eb3584e09ad30b10e3dd4d7251a`；
+`result=returned 1439750 0`，参数与本候选一致，结束标记存在，但中段有丢弃。
+保存部分含真实 DOWN=6/MOVE=74/UP=6，86 个事件与用户态 posted 时间戳对应，
+最长 post→send 12.338ms；iOS 记录接触/抬起，无 `ignoring touch event`。
+确认本轮真实传感器读取、解析、入队与 iOS 触点识别已发生，不再只限合成输入；
+持续可用及可见桌面操作仍未通过。
+
+初始化约 at_us=112488502，最后 at_us=156635370（约 44.147 秒后）
+读到 before=0004/after=0002、Data1=24 字节、obs=7、result=-5；
+内核消息缓冲明确记录 `report failed (-5), all fingers released; stopped`。
+FIFO 实测 64/64，最后一次 Data15 读取底层返回 2（成功），不是容量或 I2C 错误。
+HOME 在 at_us=210361637 才发生，晚于线程退出，故等 HOME 后测试已无法产生输入。
+
+最小源码修正：丢弃两次合法 Data15 不一致的快照，仍检查 F01，并按既有间隔继续；
+连续三次不一致时释放旧触点而保持轮询，下一一致帧恢复事件。
+未知位图位、稳定坏帧、总线/配置错误仍释放并停止，不重启控制器或重写传感器。
+observer 的 result=1 明确表示丢弃换帧快照，不授予该帧输入资格。
+定向模型验证无混帧事件、有限旧触点保留、释放后恢复及非法位图拒绝；
+原捕获模型增加了该状态观察，既有错误路径检查通过。
+触摸模块 32 项最终通过；其余 Chiron 检查 79 项通过，1 项旧 HK6 夹具缺实际 img 报错，
+未修改夹具或放宽检查。内核源码及哈希清单已更新，云端重编尚待完成。

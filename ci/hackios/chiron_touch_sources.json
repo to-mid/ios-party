@@ -44,8 +44,8 @@
   },
   "overlay_files": {
     "chiron_xnu.c": "07f75a53ad358435da54fe3f66771b4326d8abbce859826b7a342b8b1e1fa688",
-    "chiron_dsx.h": "1a09dfb7e6e3b636682f6181636c85ffae937d5fcaed85ba57c614709242187d",
-    "chiron_dsx.c": "99e1cfcc663c45f675ce8c78e75e91fcd6e089ac619cf553d7d96e2332140e6d",
+    "chiron_dsx.h": "560d0e89b2cf02a9e0fad12354be93221dd560a1e0035a2f3af97fea613ec0d9",
+    "chiron_dsx.c": "b75162f124a4ffac057bc66ced477e6cb4e0178954e4d3704c0d41f82e8906cf",
     "chiron_qup.h": "5c657fff55caa15c13e02e81ff0ae2de8cde122fe80573d738ac3a0c2169b88e",
     "chiron_qup.c": "a1b679e07732febf4f3982ca8b7e8612459476d980581b5ae813f43c2a767807",
     "chiron_f12.h": "267b6b171941602d3c502149d5f709f7b770fa83ab61bf59fb5f141a0b6f9659",

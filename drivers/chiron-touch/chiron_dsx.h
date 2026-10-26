@@ -18,6 +18,7 @@
 
 enum chiron_dsx_status {
     CHIRON_DSX_OK = 0,
+    CHIRON_DSX_FRAME_CHANGED = 1, /* observer only: discarded snapshot, poll continues */
     CHIRON_DSX_NO_TRANSPORT = -1,
     CHIRON_DSX_IO = -2,
     CHIRON_DSX_UNKNOWN = -3,
@@ -88,7 +89,7 @@ struct chiron_dsx {
     struct chiron_dsx_functions functions;
     struct chiron_dsx_layout layout;
     struct chiron_dsx_contact contact[CHIRON_DSX_CONTACTS];
-    uint8_t discovered, ready;
+    uint8_t discovered, ready, changed_frames;
     chiron_dsx_observer observer;
 };
 

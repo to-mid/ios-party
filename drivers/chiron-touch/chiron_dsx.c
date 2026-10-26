@@ -28,8 +28,8 @@ chiron_dsx_init(struct chiron_dsx *device, const struct chiron_dsx_bus *bus,
     device->post_context = context;
 }
 
-void
-chiron_dsx_stop(struct chiron_dsx *device)
+static void
+dsx_release_contacts(struct chiron_dsx *device)
 {
     for (unsigned i = 0; i < CHIRON_DSX_CONTACTS; i++) {
         struct chiron_dsx_contact *c = &device->contact[i];
@@ -37,7 +37,14 @@ chiron_dsx_stop(struct chiron_dsx *device)
             device->post(device->post_context, CHIRON_DSX_UP, i, c->x, c->y);
         c->down = 0;
     }
+}
+
+void
+chiron_dsx_stop(struct chiron_dsx *device)
+{
+    dsx_release_contacts(device);
     device->ready = 0;
+    device->changed_frames = 0;
 }
 
 int
@@ -137,6 +144,7 @@ chiron_dsx_start(struct chiron_dsx *device)
     if (status)
         return status;
     device->layout = layout;
+    device->changed_frames = 0;
     device->ready = 1;
     return CHIRON_DSX_OK;
 }
@@ -204,7 +212,7 @@ chiron_dsx_poll(struct chiron_dsx *device)
     struct chiron_dsx_layout now = {0};
     unsigned observed = 0;
     size_t frame_bytes = 0;
-    int status;
+    int status, changed = 0;
     if (!device->ready)
         return CHIRON_DSX_UNVERIFIED_LAYOUT;
     status = dsx_validate_layout(device, &now);
@@ -243,9 +251,11 @@ chiron_dsx_poll(struct chiron_dsx *device)
         if (!status)
             observed |= CHIRON_DSX_OBS_AFTER;
         unsigned mask = (unsigned)before[0] | (unsigned)before[1] << 8;
-        if (!status && (before[0] != after[0] || before[1] != after[1] ||
-            mask >> now.contacts))
+        unsigned after_mask = (unsigned)after[0] | (unsigned)after[1] << 8;
+        if (!status && (mask >> now.contacts || after_mask >> now.contacts))
             status = CHIRON_DSX_BAD_FRAME;
+        if (!status)
+            changed = mask != after_mask;
         if (!status)
             for (unsigned i = 0; i < now.contacts; i++)
                 if (!(mask & (1u << i)))
@@ -259,15 +269,24 @@ chiron_dsx_poll(struct chiron_dsx *device)
         if (!status && f01_status != 0)
             status = CHIRON_DSX_UNVERIFIED_LAYOUT;
     }
-    if (!status)
+    if (!status && !changed)
         status = chiron_dsx_frame(device, frame,
             (size_t)device->layout.contacts * CHIRON_DSX_OBJECT_BYTES);
     if (status)
         chiron_dsx_stop(device);
+    else if (changed) {
+        /* Never publish a torn frame or hold stale fingers indefinitely. */
+        if (++device->changed_frames == 3) {
+            dsx_release_contacts(device);
+            device->changed_frames = 0;
+        }
+    } else
+        device->changed_frames = 0;
     if (device->observer)
         device->observer(device, raw, (observed & CHIRON_DSX_OBS_FRAME) ?
             frame_bytes : 0,
             (uint16_t)(before[0] | (unsigned)before[1] << 8),
-            (uint16_t)(after[0] | (unsigned)after[1] << 8), f01_status, observed, status);
+            (uint16_t)(after[0] | (unsigned)after[1] << 8), f01_status, observed,
+            !status && changed ? CHIRON_DSX_FRAME_CHANGED : status);
     return status;
 }

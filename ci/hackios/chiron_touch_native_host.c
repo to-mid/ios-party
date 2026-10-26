@@ -107,6 +107,7 @@ sensor_read(void *context, uint16_t address, uint8_t *out, size_t length)
         if (length == 2)
             out[1] = (uint8_t)(m.bitmap >> 8);
         if (m.layout_case == 30 && ++m.bitmap_reads % 2 == 0) out[0] ^= 1;
+        if (m.layout_case == 35 && ++m.bitmap_reads % 2 == 0) out[0] |= 4;
     } else if (length == 6 && (address & 0xff) >= 5 &&
         ((address & 0xff) <= 0xe9)) {
         if (address == 0xe9) {
@@ -565,7 +566,7 @@ static void
 post(void *context, uint32_t type, uint32_t finger, uint32_t x, uint32_t y)
 {
     assert(context == &posted && finger == 0 && x == 32767 && y == 32767);
-    assert(type == (posted == 0 ? CHIRON_DSX_DOWN : CHIRON_DSX_UP));
+    assert(type == (posted % 2 == 0 ? CHIRON_DSX_DOWN : CHIRON_DSX_UP));
     posted++;
 }
 
@@ -701,7 +702,28 @@ bitmap_snapshots(void)
     assert(chiron_dsx_poll(&device) == 0 && posted == 1);
     m.bitmap = 0; /* Data1 still contains an old finger: Data15 must release it. */
     assert(chiron_dsx_poll(&device) == 0 && posted == 2);
-    setup(); m.layout_case = 30;
+    setup(); m.layout_case = 29;
+    assert(chiron_native_bind(&native, &ops, 0, &bus) == 0);
+    posted = 0;
+    chiron_dsx_init(&device, &bus, post, &posted);
+    assert(chiron_dsx_start(&device) == 0);
+    assert(chiron_dsx_poll(&device) == 0 && posted == 1);
+    m.layout_case = 30;
+    for (unsigned i = 1; i <= 2; i++) {
+        assert(chiron_dsx_poll(&device) == 0 && device.ready);
+        assert(posted == 1 && device.contact[0].down && device.changed_frames == i);
+    }
+    assert(chiron_dsx_poll(&device) == 0 && posted == 2 && device.ready);
+    assert(!device.contact[0].down && !device.changed_frames);
+    m.layout_case = 29;
+    assert(chiron_dsx_poll(&device) == 0 && posted == 3 && device.contact[0].down);
+    m.layout_case = 30;
+    assert(chiron_dsx_poll(&device) == 0 && posted == 3 && device.changed_frames == 1);
+    m.layout_case = 29;
+    assert(chiron_dsx_poll(&device) == 0 && posted == 3 && !device.changed_frames);
+    m.bitmap = 0;
+    assert(chiron_dsx_poll(&device) == 0 && posted == 4 && device.ready);
+    setup(); m.layout_case = 35;
     assert(chiron_native_bind(&native, &ops, 0, &bus) == 0);
     posted = 0;
     chiron_dsx_init(&device, &bus, post, &posted);
@@ -807,9 +829,14 @@ poll_observation(void)
     assert(chiron_dsx_poll(&device) == 0 && posted == 2);
     assert(captured.calls == 2 && captured.observed == 13 && !captured.bytes);
     assert(!captured.before && !captured.after); /* Unread Data1 is not a measured zero frame. */
+    m.layout_case = 30; m.bitmap = 1;
+    assert(chiron_dsx_poll(&device) == 0 && posted == 2 && device.ready);
+    assert(captured.calls == 3 && captured.observed == 15 &&
+        captured.before == 1 && captured.after == 0 &&
+        captured.status == CHIRON_DSX_FRAME_CHANGED);
     m.sensor_status = 0x80;
     assert(chiron_dsx_poll(&device) == CHIRON_DSX_UNVERIFIED_LAYOUT);
-    assert(captured.calls == 3 && !captured.observed && !captured.bytes);
+    assert(captured.calls == 4 && !captured.observed && !captured.bytes);
     setup(); m.layout_case = 34;
     assert(chiron_native_bind(&native, &ops, 0, &bus) == 0);
     chiron_dsx_init(&device, &bus, post, &posted);
