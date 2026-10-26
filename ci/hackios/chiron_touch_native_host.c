@@ -93,7 +93,7 @@ sensor_read(void *context, uint16_t address, uint8_t *out, size_t length)
     } else if (address == functions.f12.control + 4 && length == 1) {
         out[0] = m.layout_case == 28 ? 0x1f : m.report_enable;
     } else if (address == functions.f12.data + 1 && (length == 16 || length == 80)) {
-        out[0] = 1;
+        out[0] = m.layout_case == 34 ? 2 : 1;
         out[1] = 0xf4; out[2] = 1;
         out[3] = 0xe8; out[4] = 3; /* finger0 at 500/1000 */
         if (m.layout_case == 32) m.sensor_status = 0x80;
@@ -714,6 +714,76 @@ bitmap_snapshots(void)
     assert(chiron_dsx_poll(&device) == CHIRON_DSX_UNVERIFIED_LAYOUT && !posted && !device.ready);
 }
 
+static struct {
+    unsigned calls, observed;
+    size_t bytes;
+    uint16_t before, after;
+    uint8_t f01, raw[CHIRON_DSX_CONTACTS * CHIRON_DSX_OBJECT_BYTES];
+    int status;
+} captured;
+
+static void
+observe_poll(const struct chiron_dsx *device, const uint8_t *raw, size_t bytes,
+    uint16_t before, uint16_t after, uint8_t f01, unsigned observed, int status)
+{
+    assert(device->layout.contacts == 2 && bytes <= sizeof(captured.raw));
+    captured.calls++;
+    captured.observed = observed;
+    captured.bytes = bytes;
+    captured.before = before;
+    captured.after = after;
+    captured.f01 = f01;
+    captured.status = status;
+    memset(captured.raw, 0, sizeof(captured.raw));
+    memcpy(captured.raw, raw, bytes);
+}
+
+static void
+poll_observation(void)
+{
+    struct chiron_native native;
+    struct chiron_dsx_bus bus;
+    struct chiron_dsx device;
+    struct chiron_qup_io ops = io();
+    setup(); m.layout_case = 29;
+    assert(chiron_native_bind(&native, &ops, 0, &bus) == 0);
+    chiron_dsx_init(&device, &bus, post, &posted);
+    assert(chiron_dsx_start(&device) == 0 && !device.observer);
+    posted = 0;
+    unsigned start = m.transactions;
+    assert(chiron_dsx_poll(&device) == 0 && posted == 1);
+    unsigned ordinary_transactions = m.transactions - start;
+    setup(); m.layout_case = 29;
+    assert(chiron_native_bind(&native, &ops, 0, &bus) == 0);
+    chiron_dsx_init(&device, &bus, post, &posted);
+    assert(chiron_dsx_start(&device) == 0);
+    device.observer = observe_poll;
+    memset(&captured, 0, sizeof(captured));
+    posted = 0;
+    start = m.transactions;
+    assert(chiron_dsx_poll(&device) == 0 && posted == 1);
+    assert(m.transactions - start == ordinary_transactions); /* No diagnostic I2C reads. */
+    assert(captured.calls == 1 && captured.observed == 15 && captured.bytes == 16);
+    assert(captured.before == 1 && captured.after == 1 && captured.f01 == 0);
+    assert(captured.raw[0] == 1 && captured.raw[1] == 0xf4 && captured.status == 0);
+    m.bitmap = 0;
+    assert(chiron_dsx_poll(&device) == 0 && posted == 2);
+    assert(captured.calls == 2 && captured.observed == 13 && !captured.bytes);
+    assert(!captured.before && !captured.after); /* Unread Data1 is not a measured zero frame. */
+    m.sensor_status = 0x80;
+    assert(chiron_dsx_poll(&device) == CHIRON_DSX_UNVERIFIED_LAYOUT);
+    assert(captured.calls == 3 && !captured.observed && !captured.bytes);
+    setup(); m.layout_case = 34;
+    assert(chiron_native_bind(&native, &ops, 0, &bus) == 0);
+    chiron_dsx_init(&device, &bus, post, &posted);
+    assert(chiron_dsx_start(&device) == 0);
+    device.observer = observe_poll;
+    posted = 0;
+    assert(chiron_dsx_poll(&device) == CHIRON_DSX_BAD_FRAME && !posted && !device.ready);
+    assert(captured.observed == 15 && captured.raw[0] == 2 &&
+        captured.status == CHIRON_DSX_BAD_FRAME);
+}
+
 int main(int argc, char **argv)
 {
     assert(argc == 2);
@@ -728,6 +798,7 @@ int main(int argc, char **argv)
     case 7: board_probe(); break;
     case 8: retained_pipeline(); break;
     case 9: reset_initialization(); break;
+    case 10: poll_observation(); break;
     default: assert(0);
     }
     return 0;

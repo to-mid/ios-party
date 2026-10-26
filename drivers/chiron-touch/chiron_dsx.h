@@ -67,6 +67,15 @@ struct chiron_dsx_bus {
 typedef void (*chiron_dsx_post)(void *, uint32_t type, uint32_t finger,
     uint32_t x, uint32_t y);
 
+struct chiron_dsx;
+enum chiron_dsx_observed {
+    CHIRON_DSX_OBS_BEFORE = 1, CHIRON_DSX_OBS_FRAME = 2,
+    CHIRON_DSX_OBS_AFTER = 4, CHIRON_DSX_OBS_F01 = 8
+};
+/* Observes existing reads only. Frame bytes are before Data15 filtering. */
+typedef void (*chiron_dsx_observer)(const struct chiron_dsx *, const uint8_t *,
+    size_t, uint16_t before, uint16_t after, uint8_t f01, unsigned observed, int status);
+
 struct chiron_dsx_contact {
     uint32_t x, y;
     uint8_t down;
@@ -80,6 +89,7 @@ struct chiron_dsx {
     struct chiron_dsx_layout layout;
     struct chiron_dsx_contact contact[CHIRON_DSX_CONTACTS];
     uint8_t discovered, ready;
+    chiron_dsx_observer observer;
 };
 
 void chiron_dsx_init(struct chiron_dsx *, const struct chiron_dsx_bus *,

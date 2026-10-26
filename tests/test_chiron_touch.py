@@ -109,6 +109,9 @@ class NativeTransportTests(unittest.TestCase):
     def test_measured_reset_initialization_readback_and_no_recovery_during_poll(self):
         self.run_case(9)
 
+    def test_capture_observes_actual_reads_without_extra_transactions_or_events(self):
+        self.run_case(10)
+
 
 class OverlayTests(unittest.TestCase):
     def setUp(self):
@@ -210,6 +213,7 @@ class OverlayTests(unittest.TestCase):
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 #include <setjmp.h>
 #define CHIRON_PORT 1
@@ -310,6 +314,9 @@ static wait_result_t thread_block(void *continuation) {
 }
 static void redwood_touch_post(uint32_t t, uint32_t f, uint32_t x, uint32_t y) {
     (void)t; (void)f; (void)x; (void)y; posts++;
+}
+void redwood_tl(const char *format, ...) {
+    va_list args; va_start(args, format); vprintf(format, args); va_end(args);
 }
 #include "redwood_goodix.c"
 int main(void) {
@@ -447,6 +454,15 @@ int main(void) {
         .expected = "(value & 0x03) == 0 (awake)"
     };
     chiron_layout_refusal_report();
+    chiron_touch.layout.contacts = 1;
+    uint8_t raw[8] = {1};
+    chiron_capture_report(&chiron_touch, raw, sizeof(raw), 1, 1, 0, 15, 0);
+    assert(chiron_capture_records == 1);
+    chiron_capture_report(&chiron_touch, raw, sizeof(raw), 1, 1, 0, 15, 0);
+    assert(chiron_capture_records == 1); /* Five-second rate limit on the stalled host clock. */
+    for (unsigned i = 0; i < 100; i++)
+        chiron_capture_report(&chiron_touch, raw, sizeof(raw), 1, 1, 0, 15, -5);
+    assert(chiron_capture_records == 64);
     return 0;
 }
 """)
@@ -462,6 +478,7 @@ int main(void) {
         self.assertIn("F12 refusal field=F01.Control0.sleep address=31 actual=00 "
                       "expected=(value & 0x03) == 0 (awake); sensor configuration write attempts=0",
                       result.stdout)
+        self.assertIn("chiron touch: raw=0100000000000000", result.stdout)
 
 
 class LoaderHandoffTests(unittest.TestCase):

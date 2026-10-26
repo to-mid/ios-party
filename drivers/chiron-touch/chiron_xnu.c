@@ -31,6 +31,7 @@ _Static_assert(CHIRON_DSX_UP == REDWOOD_TOUCH_UP, "touch UP ABI");
 
 extern kern_return_t thread_terminate(thread_t thread);
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
+extern void redwood_tl(const char *, ...);
 
 static struct chiron_dsx chiron_touch;
 static struct chiron_native chiron_native;
@@ -39,6 +40,8 @@ static struct chiron_board_report chiron_board_report;
 static struct chiron_clock_report chiron_clock_report;
 static int chiron_clock_writes_allowed;
 static uint32_t chiron_touch_mode;
+static unsigned chiron_capture_polls, chiron_capture_records;
+static uint64_t chiron_capture_last_us;
 static struct {
     uint64_t physical;
     uint32_t size;
@@ -478,6 +481,37 @@ chiron_layout_refusal_report(void)
 }
 
 static void
+chiron_capture_report(const struct chiron_dsx *device, const uint8_t *frame,
+    size_t bytes, uint16_t before, uint16_t after, uint8_t f01,
+    unsigned observed, int status)
+{
+    static const char hex[] = "0123456789abcdef";
+    char raw[CHIRON_DSX_CONTACTS * CHIRON_DSX_OBJECT_BYTES * 2 + 1];
+    uint64_t now = chiron_now_us(NULL);
+    unsigned active = 0;
+    chiron_capture_polls++;
+    if (chiron_capture_records >= 64 || (!status && chiron_capture_records &&
+        now - chiron_capture_last_us < 5000000))
+        return;
+    chiron_capture_last_us = now;
+    chiron_capture_records++;
+    if (bytes > sizeof(raw) / 2)
+        bytes = sizeof(raw) / 2;
+    for (size_t i = 0; i < bytes; i++) {
+        raw[2 * i] = hex[frame[i] >> 4];
+        raw[2 * i + 1] = hex[frame[i] & 15u];
+    }
+    raw[2 * bytes] = 0;
+    for (unsigned i = 0; i < device->layout.contacts; i++)
+        if (device->contact[i].down)
+            active |= 1u << i;
+    redwood_tl("chiron touch: capture poll=%u obs=%x result=%d before=%04x after=%04x f01=%02x active=%x bytes=%u at_us=%llu\n",
+        chiron_capture_polls, observed, status, (unsigned)before, (unsigned)after,
+        (unsigned)f01, active, (unsigned)bytes, (unsigned long long)now);
+    redwood_tl("chiron touch: raw=%s\n", raw);
+}
+
+static void
 chiron_touch_thread(void *parameter, wait_result_t result)
 {
     int status;
@@ -512,6 +546,15 @@ chiron_touch_thread(void *parameter, wait_result_t result)
     }
     printf("chiron touch: reset initialization verified; sensor configuration write attempts=%u\n",
         (unsigned)chiron_native.reader.configuration_write_attempts);
+    uint32_t capture = 0;
+    if (PE_parse_boot_argn("chiron_touch_capture", &capture, sizeof(capture)) && capture == 1) {
+        chiron_touch.observer = chiron_capture_report;
+        redwood_tl("chiron touch: capture layout f01=%x data1=%x data15=%x bitmap_bytes=%u contacts=%u max=%ux%u\n",
+            (unsigned)chiron_touch.functions.f01.data, (unsigned)chiron_touch.layout.data1,
+            (unsigned)chiron_touch.layout.data15, (unsigned)chiron_touch.layout.data15_bytes,
+            (unsigned)chiron_touch.layout.contacts, (unsigned)chiron_touch.layout.max_x,
+            (unsigned)chiron_touch.layout.max_y);
+    }
     printf("chiron touch: verified DSX layout, polling every 20 ms\n");
     for (;;) {
         /* Thread context is required by redwood_touch_post's mutex/queue. */

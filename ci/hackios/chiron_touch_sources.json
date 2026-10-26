@@ -43,9 +43,9 @@
     "redwood_input.c": "c2d9f98a906fb43e2d6cd1639d258379fc356c35e3c8556bcd013e9f12f0ddc9"
   },
   "overlay_files": {
-    "chiron_xnu.c": "cc23ea39a1915629b66ed7c16a23ae8aca714c2f1dade425d07796f7f6ae5156",
-    "chiron_dsx.h": "4f1e3dd4999d2e59a79b026a040062579bf4eb0f2569f4814891ca26ccc75f59",
-    "chiron_dsx.c": "f2a42d1e647ee0458aafb8e62043b4074e8af665bdc0fc6d5e8ff3923956e5ad",
+    "chiron_xnu.c": "9bd5aeffed0d8418f6247ec80bba36a264b879fb25c9585d8c9e648a2e2fc21c",
+    "chiron_dsx.h": "1a09dfb7e6e3b636682f6181636c85ffae937d5fcaed85ba57c614709242187d",
+    "chiron_dsx.c": "9ba1313967212fb451adc08e194794efbea23f7b8bb6434fd28515e96fe2e655",
     "chiron_qup.h": "5c657fff55caa15c13e02e81ff0ae2de8cde122fe80573d738ac3a0c2169b88e",
     "chiron_qup.c": "a1b679e07732febf4f3982ca8b7e8612459476d980581b5ae813f43c2a767807",
     "chiron_f12.h": "267b6b171941602d3c502149d5f709f7b770fa83ab61bf59fb5f141a0b6f9659",

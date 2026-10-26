@@ -111,6 +111,41 @@ def active_fixture():
 
 
 class ExperimentAdmissionTests(unittest.TestCase):
+    def test_capture_requires_new_observer_and_explicit_five_minute_graphics_mode(self):
+        proof, inputs, payload = active_fixture()
+        entries = phone.payload_entries(payload)
+        entries["kernel"] += b"chiron touch: capture layout"
+        proof["kernel"] = phone.content_digest(entries["kernel"])
+        proof["source_build"]["artifacts"]["kernel.development.hackios"] = proof["kernel"]
+        proof["source_build"]["overlays"]["kernel"]["changes"]["touch"][
+            "poll_frame_capture_implemented"] = True
+        proof["touch_capture"] = True
+        proof["command_line"] = proof["command_line"].replace(
+            "loader_return_after=60", "chiron_touch_capture=1 loader_return_after=300")
+        entries["cmdline"] = proof["command_line"].encode() + b"\0"
+        payload = pack(list(entries.items()))
+        inputs["payload"] = phone.content_digest(payload)
+        phone.admit_qualification(proof, inputs, payload, True)
+        for key, value in (("touch_capture", False), ("touch_capture", "true"),
+                           ("touch_desktop", True), ("touch_active", False)):
+            altered = copy.deepcopy(proof)
+            altered[key] = value
+            with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                phone.admit_qualification(
+                    altered, dict(inputs, driver_experiment=altered), payload, True)
+        altered = copy.deepcopy(proof)
+        altered["source_build"]["overlays"]["kernel"]["changes"]["touch"][
+            "poll_frame_capture_implemented"] = False
+        with self.assertRaises(ValueError):
+            phone.admit_qualification(altered, dict(inputs, driver_experiment=altered), payload, True)
+        altered = copy.deepcopy(proof)
+        altered["command_line"] = altered["command_line"].replace("=300", "=60")
+        changed = pack(list(dict(entries, cmdline=altered["command_line"].encode() + b"\0").items()))
+        with self.assertRaises(ValueError):
+            phone.admit_qualification(
+                altered, dict(inputs, driver_experiment=altered,
+                              payload=phone.content_digest(changed)), changed, True)
+
     def test_desktop_touch_requires_explicit_persistent_mode_and_unchanged_kernel(self):
         proof, inputs, payload = active_fixture()
         entries = phone.payload_entries(payload)

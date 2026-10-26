@@ -77,6 +77,10 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
     if type(desktop) is not bool or (desktop and
             (not chosen["touch"] or proof.get("touch_active") is not True)):
         raise ValueError("desktop touch requires an explicit active touch experiment")
+    capture = proof.get("touch_capture", False)
+    if type(capture) is not bool or (capture and
+            (desktop or not chosen["touch"] or proof.get("touch_active") is not True)):
+        raise ValueError("touch capture requires a separate active capture experiment")
     source = proof["source_build"]
     if (source.get("schema") != "chiron-driver-build-v1" or source.get("variant") != chosen["variant"]
             or source.get("cpu_count") != chosen["cpu_count"]):
@@ -109,6 +113,8 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
                     or proof.get("l6_abi", False)
                     or proof.get("l6_capture", False)):
                 raise ValueError("active touch requires pinmux, retained power/reset and QUP write proof")
+            if capture and touch.get("poll_frame_capture_implemented") is not True:
+                raise ValueError("touch capture requires the new raw-frame observer")
         elif proof.get("qup_writes", False) or proof.get("sensor_configuration_writes", False):
             raise ValueError("probe cannot request QUP or sensor configuration writes")
         if type(proof.get("clock_prepare", False)) is not bool:
@@ -192,6 +198,8 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
             raise ValueError("payload kernel lacks reset sensor initialization")
         if b"F01.Data0.status_after_configure" not in entries["kernel"]:
             raise ValueError("payload kernel lacks the F01 device-status verification")
+        if capture and b"chiron touch: capture layout" not in entries["kernel"]:
+            raise ValueError("payload kernel lacks touch frame capture")
     root = content_digest(entries["ramdisk"])
     if any(root[key] != inputs["small_root"][key] for key in root):
         raise ValueError("payload small root differs")
@@ -210,7 +218,8 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
         if proof.get("l6_prepare", False):
             pattern += rb" chiron_touch_l6=1"
         if proof.get("touch_active", False):
-            pattern += rb" touch_lat=1" if desktop else rb" loader_return_after=60 touch_lat=1"
+            pattern += (rb" chiron_touch_capture=1 loader_return_after=300 touch_lat=1" if capture
+                        else rb" touch_lat=1" if desktop else rb" loader_return_after=60 touch_lat=1")
     if (not command.endswith(b"\0") or b"\0" in command[:-1]
             or not re.fullmatch(pattern + rb"\0", command)
             or command[:-1].decode("ascii") != proof["command_line"]
@@ -223,7 +232,7 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
 
 
 def verify_source(folder, variant, source_run, clock_prepare=False, pinmux_prepare=False,
-                  touch_active=False):
+                  touch_active=False, touch_capture=False):
     proof = json.loads((folder / "driver-build.json").read_text())
     chosen = selection(variant)
     if (proof.get("schema") != "chiron-driver-build-v1"
@@ -264,6 +273,8 @@ def verify_source(folder, variant, source_run, clock_prepare=False, pinmux_prepa
             raise ValueError("touch source build has no reset sensor initialization")
         if touch_active and report.get("f01_configured_read_zero_implemented") is not True:
             raise ValueError("touch source build has no CONFIGURED read-zero semantics")
+        if touch_capture and report.get("poll_frame_capture_implemented") is not True:
+            raise ValueError("touch source build has no raw-frame observer")
     return proof
 
 
@@ -284,12 +295,16 @@ def main():
     parser.add_argument("--touch-active", action="store_true")
     parser.add_argument("--touch-desktop", action="store_true",
                         help="Active touch with persistent graphics; no timed return to loader")
+    parser.add_argument("--touch-capture", action="store_true",
+                        help="Observe existing touch reads in graphics mode and return after 300 seconds")
     args = parser.parse_args()
     import apply_chiron_smp
     import cloud
 
     cloud.require_runner()
-    if args.touch_desktop:
+    if args.touch_capture and args.touch_desktop:
+        parser.error("--touch-capture and --touch-desktop are separate experiments")
+    if args.touch_desktop or args.touch_capture:
         args.touch_active = True
     if args.touch_active:
         if args.variant != "touch" or args.l6_prepare or args.l6_abi or args.l6_capture:
@@ -309,7 +324,7 @@ def main():
     if args.clock_prepare and args.variant != "touch":
         parser.error("clock/pinmux preparation requires the touch variant")
     source = verify_source(args.source_build, args.variant, args.source_run,
-                           args.clock_prepare, args.pinmux_prepare, args.touch_active)
+                           args.clock_prepare, args.pinmux_prepare, args.touch_active, args.touch_capture)
     chosen = selection(args.variant)
     base = args.runtime / "phone"
     inputs = json.loads((base / "inputs.json").read_text())
@@ -339,7 +354,8 @@ def main():
         if args.l6_prepare:
             command_line += " chiron_touch_l6=1"
         if args.touch_active:
-            command_line += (" touch_lat=1" if args.touch_desktop
+            command_line += (" chiron_touch_capture=1 loader_return_after=300 touch_lat=1" if args.touch_capture
+                             else " touch_lat=1" if args.touch_desktop
                              else " loader_return_after=60 touch_lat=1")
     kernel = args.source_build / "kernel.development.hackios"
     cloud.command([sys.executable, args.work / "xnuloader/mkpayload.py", "--usb",
@@ -358,6 +374,7 @@ def main():
         "probe_only": chosen["touch"] and not args.touch_active,
         "touch_active": args.touch_active,
         "touch_desktop": args.touch_desktop,
+        "touch_capture": args.touch_capture,
         "qup_writes": args.touch_active,
         "sensor_configuration_writes": args.touch_active,
         "clock_prepare": args.clock_prepare,

@@ -77,6 +77,7 @@ def _overlay(root, prefix, manifest):
         "f12_first_refusal_report_implemented": True,
         "reset_sensor_initialization_implemented": True,
         "f01_configured_read_zero_implemented": True,
+        "poll_frame_capture_implemented": True,
         "sensor_write_policy": "first-discovery-reset-0x81-only-validated-F12-Ctrl28-and-F01-Control0",
         "native_i2c_hardware_enabled": False,
         "board_probe_implemented": True,
