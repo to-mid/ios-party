@@ -1,0 +1,75 @@
+name: MIX2 UniXNU menu touch
+on:
+  push:
+    branches: ['codex/unixnu-menu-touch']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  firmware:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PYTHONDONTWRITEBYTECODE: '1'
+      CHIRON_MENU_TOUCH: '1'
+      CHIRON_EFI_RUN: ${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.11'
+      - name: Install the existing EFI and firmware toolchains
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential uuid-dev iasl nasm clang lld llvm \
+            gcc-aarch64-linux-gnu abootimg python3-distutils python3-pil python3-git \
+            gettext libfreetype6-dev mtools dosfstools
+      - name: Test menu input and existing DSX behavior
+        run: |
+          python3 -B -m unittest discover -s tests -p 'test_chiron_menu_touch.py' -v
+          python3 -B -m unittest discover -s tests -p 'test_chiron_touch.py' -v
+          python3 -B -m unittest discover -s tests -p 'test_chiron_driver_phone.py' -v
+      - name: Reuse unchanged EFI components and previous XNU payload
+        run: |
+          gh run download 39417919101 --repo "$GITHUB_REPOSITORY" \
+            --name chiron-efi --dir dist/efi
+          gh run download 39951169904 --repo "$GITHUB_REPOSITORY" \
+            --name chiron-memory-entry-39951169904 --dir dist/chiron-entry
+          cp dist/chiron-entry/ChironRamdisk.efi dist/efi/
+          gh run download 40276528772 --repo "$GITHUB_REPOSITORY" \
+            --name MIX2-EXPERIMENTAL-TOUCH-CAPTURE-40276528772 --dir dist/prior-touch
+          gh run download 39770335838 --repo "$GITHUB_REPOSITORY" \
+            --name chiron-source-trace-39770335838-1 --dir dist/chiron-boot-template
+      - name: Compile only the two changed UniXNU EFI modules
+        run: bash ci/build-efi.sh
+      - name: Rebuild the firmware body with unchanged memory policy
+        run: bash ci/hackios/build-memory-firmware.sh
+      - name: Verify retained I2C firmware identity
+        run: |
+          python3 -c 'import hashlib,os,pathlib;p=pathlib.Path(os.environ["RUNNER_TEMP"])/"chiron-memory-sources/uefi/Platforms/Msm8998Binaries/common/Binaries/I2C/I2C.efi";assert hashlib.sha256(p.read_bytes()).hexdigest()=="1b1df5b767b488d8049455c70c3b3d92e45aca8a2d33a5c075c6201a4e836ff6";print("retained MSM8998 I2C firmware identity verified")'
+      - name: Package the menu experiment without rebuilding XNU or the system volume
+        run: |
+          python3 ci/uefi/package_menu_touch.py \
+            --prior dist/prior-touch \
+            --template dist/chiron-boot-template/CT-39770335838-1-775f3f2e4009.img \
+            --entry dist/chiron-entry/ChironHackios.efi \
+            --firmware dist/chiron-memory-firmware \
+            --proof dist/efi/chiron-menu-touch.json \
+            --output dist/unixnu-touch
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: MIX2-EXPERIMENTAL-UNIXNU-TOUCH-${{ github.run_id }}
+          path: |
+            dist/unixnu-touch/
+            dist/efi/chiron-menu-touch.json
+            dist/efi/UniXNU.efi
+            dist/efi/UniXNUDxe.efi
+            dist/chiron-memory-firmware/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 1

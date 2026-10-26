@@ -65,7 +65,10 @@ def rebuild_transport_kernel(encoded, firmware, policy):
 
 
 def package(template, phone, entry, qualification, output, firmware=None, policy=None,
-            source_experiment=False, title="HK6c", image_name="MIX2-HackiOS-8796-usb.img"):
+            source_experiment=False, title="HK6c", image_name="MIX2-HackiOS-8796-usb.img",
+            menu_timeout=3):
+    if type(menu_timeout) is not int or not 0 <= menu_timeout <= 300:
+        raise ValueError("menu timeout must be 0..300 seconds")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}\.img", image_name):
         raise ValueError("invalid boot image basename")
     proof = json.loads(qualification.read_text())
@@ -97,7 +100,7 @@ def package(template, phone, entry, qualification, output, firmware=None, policy
         config = work / "unixnu.toml"
         config.write_text(('''version = 1
 [boot]
-timeout = 3
+timeout = MENU_TIMEOUT
 default = "chiron-hackios"
 [kits]
 autoload = false
@@ -111,7 +114,7 @@ id = "firmware"
 title = "Return to firmware"
 type = "action"
 action = "exit"
-''').replace("MENU_TITLE", json.dumps(title), 1))
+''').replace("MENU_TIMEOUT", str(menu_timeout), 1).replace("MENU_TITLE", json.dumps(title), 1))
         mapping = {
             "EFI/UniXNU/unixnu.toml": config,
             "EFI/HackiOS/ChironHackios.efi": entry,

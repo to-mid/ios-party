@@ -1,0 +1,34 @@
+{
+  "schema": "chiron-menu-i2c-static-evidence-v1",
+  "repository": "edk2-porting/edk2-msm8998",
+  "commit": "ace27110b9b9b6c591387d50cf748ec646402b4a",
+  "path": "Platforms/Msm8998Binaries/common/Binaries/I2C/I2C.efi",
+  "sha256": "1b1df5b767b488d8049455c70c3b3d92e45aca8a2d33a5c075c6201a4e836ff6",
+  "tool": "LLVM llvm-objdump; not REA evidence",
+  "analysis_copy_sha256": "228e3cafd5064b340a887421cec36023f3479e5274953114a94c6f0d0037b664",
+  "analysis_copy_change": "Only debug-directory reference bytes at file offset 3856 cleared; never a packaging input",
+  "protocol_rva": "0xb090",
+  "revision": "0x10000",
+  "callbacks_rva": {
+    "Open": "0x2378",
+    "Read": "0x23dc",
+    "Write": "0x26d8",
+    "Transfer": "0x2490",
+    "Close": "0x277c"
+  },
+  "instance_table_rva": "0x8dd0",
+  "instance_4_dal_device": "0x02000025",
+  "legacy_config_bytes": 12,
+  "legacy_config_fields": ["bus_frequency_khz", "slave_address", "slave_address_type=0 (7-bit)"],
+  "legacy_header_reference": "David112x/android-firmware-qti-sdm660 boot_images/QcomPkg/Include/I2cApi.h Git blob 0560561af7f43d4190be948bcf1c427b3e2c20dc",
+  "config_reads": {
+    "frequency_offset": "0x0 (0x264c)",
+    "slave_address_offset": "0x4 (0x25d0)"
+  },
+  "zero_timeout_rejection": "Read at 0x23f8 and Write at 0x26f4 return status 1 when w7 is zero, before transfer",
+  "limitations": [
+    "Static code observation; not phone execution",
+    "Does not establish the cause of the separate XNU native-QUP failure",
+    "Current UniXNU Menu.c consumes only SimpleTextIn and the chiron FDF/DSC omits the legacy Synaptics driver"
+  ]
+}

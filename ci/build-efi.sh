@@ -5,6 +5,10 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT"
 SOURCE_ROOT="${RUNNER_TEMP}/chiron-sources"
 python3 ci/fetch_sources.py unixnu mu --root "$SOURCE_ROOT"
+if [ "${CHIRON_MENU_TOUCH:-0}" = 1 ]; then
+    python3 ci/apply_chiron_menu_touch.py --source "$SOURCE_ROOT/unixnu" \
+      --output "$ROOT/dist/efi/chiron-menu-touch.json"
+fi
 EDK2="$SOURCE_ROOT/mu"
 export WORKSPACE="$RUNNER_TEMP/chiron-efi-work"
 export PACKAGES_PATH="$ROOT/package:$SOURCE_ROOT/unixnu/package:$SOURCE_ROOT/unixnu/drivers/DarwinBoot:$EDK2"
@@ -21,8 +25,18 @@ for name in target tools_def build_rule; do
 done
 make -C "$EDK_TOOLS_PATH/Source/C" -j2
 export CONF_PATH="$WORKSPACE/Conf"
-build -p ChironCiPkg/ChironCi.dsc -a AARCH64 -b DEBUG -t CLANGPDB -n 2
-for name in UniXNU UniXNUDxe DarwinBoot HelloPayload ChironProbe ChironRamdisk; do
+if [ "${CHIRON_MENU_TOUCH:-0}" = 1 ]; then
+    for name in UniXNU UniXNUDxe; do
+        if [ "$name" = UniXNU ]; then module=Application; else module=Driver; fi
+        build -p ChironCiPkg/ChironCi.dsc -a AARCH64 -b DEBUG -t CLANGPDB -n 2 \
+          -m "UniXNUPkg/$module/$name/$name.inf"
+    done
+    EFI_OUTPUTS=(UniXNU UniXNUDxe)
+else
+    build -p ChironCiPkg/ChironCi.dsc -a AARCH64 -b DEBUG -t CLANGPDB -n 2
+    EFI_OUTPUTS=(UniXNU UniXNUDxe DarwinBoot HelloPayload ChironProbe ChironRamdisk)
+fi
+for name in "${EFI_OUTPUTS[@]}"; do
     cp "$WORKSPACE/Build/UniXNU/DEBUG_CLANGPDB/AARCH64/$name.efi" "$ROOT/dist/efi/"
 done
 python3 ci/inspect_artifacts.py "$ROOT/dist/efi"
