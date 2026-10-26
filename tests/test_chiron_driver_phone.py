@@ -112,28 +112,54 @@ def active_fixture():
     return proof, inputs, payload
 
 
+def home_wake_fixture():
+    proof, inputs, payload = active_fixture()
+    entries = phone.payload_entries(payload)
+    entries["kernel"] += b"chiron touch: capture layout"
+    proof["kernel"] = phone.content_digest(entries["kernel"])
+    proof["source_build"]["artifacts"]["kernel.development.hackios"] = proof["kernel"]
+    proof["source_build"]["overlays"]["kernel"]["changes"]["touch"][
+        "poll_frame_capture_implemented"] = True
+    proof["touch_capture"] = True
+    proof["touch_home_wake"] = True
+    proof["command_line"] = proof["command_line"].replace(
+        "loader_return_after=60", "chiron_touch_capture=1 loader_return_after=300")
+    entries["cmdline"] = proof["command_line"].encode() + b"\0"
+    payload = pack(list(entries.items()))
+    inputs["payload"] = phone.content_digest(payload)
+    proof["home_wake"] = {
+        "schema": "chiron-touch-home-wake-v1", "synthetic": False,
+        "gesture_count": 0, "home_button_count": 1, "producer_rebuilt": False,
+        "physical_touch_qualified": False, "logical_readback_changed": ["/etc/rc.jobs"],
+        "root": inputs["small_root"],
+    }
+    return proof, inputs, payload
+
+
 class ExperimentAdmissionTests(unittest.TestCase):
+    def test_input_qos_requires_explicit_rebuilt_consumer_without_synthetic_touch(self):
+        proof, inputs, payload = home_wake_fixture()
+        proof["touch_input_qos"] = True
+        proof["home_wake"].update(
+            input_qos=True, input_consumer_rebuilt=True, input_qos_class="USER_INTERACTIVE",
+            input_source_base_sha256="7602d0ce95eb32e69ba54717d0ca680354269c2446d7846fc661b656dd99ab9c",
+            logical_readback_changed=["/etc/rc.jobs", "/lib/libredwood.dylib"])
+        phone.admit_qualification(proof, inputs, payload, True)
+        for key, value in (("touch_input_qos", False), ("touch_home_wake", False)):
+            bad = copy.deepcopy(proof)
+            bad[key] = value
+            with self.assertRaises(ValueError, msg=key):
+                phone.admit_qualification(bad, {**inputs, "driver_experiment": bad}, payload, True)
+        for key, value in (("input_qos", False), ("input_consumer_rebuilt", False),
+                           ("input_qos_class", "BACKGROUND"),
+                           ("logical_readback_changed", ["/etc/rc.jobs"])):
+            bad = copy.deepcopy(proof)
+            bad["home_wake"][key] = value
+            with self.assertRaises(ValueError, msg=key):
+                phone.admit_qualification(bad, {**inputs, "driver_experiment": bad}, payload, True)
+
     def test_home_wake_requires_real_capture_and_no_synthetic_gesture(self):
-        proof, inputs, payload = active_fixture()
-        entries = phone.payload_entries(payload)
-        entries["kernel"] += b"chiron touch: capture layout"
-        proof["kernel"] = phone.content_digest(entries["kernel"])
-        proof["source_build"]["artifacts"]["kernel.development.hackios"] = proof["kernel"]
-        proof["source_build"]["overlays"]["kernel"]["changes"]["touch"][
-            "poll_frame_capture_implemented"] = True
-        proof["touch_capture"] = True
-        proof["touch_home_wake"] = True
-        proof["command_line"] = proof["command_line"].replace(
-            "loader_return_after=60", "chiron_touch_capture=1 loader_return_after=300")
-        entries["cmdline"] = proof["command_line"].encode() + b"\0"
-        payload = pack(list(entries.items()))
-        inputs["payload"] = phone.content_digest(payload)
-        proof["home_wake"] = {
-            "schema": "chiron-touch-home-wake-v1", "synthetic": False,
-            "gesture_count": 0, "home_button_count": 1, "producer_rebuilt": False,
-            "physical_touch_qualified": False, "logical_readback_changed": ["/etc/rc.jobs"],
-            "root": inputs["small_root"],
-        }
+        proof, inputs, payload = home_wake_fixture()
         phone.admit_qualification(proof, inputs, payload, True)
         for key, value in (("touch_capture", False), ("touch_active", False),
                            ("touch_hid_replay", True), ("touch_home_wake", "true")):

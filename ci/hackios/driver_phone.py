@@ -100,6 +100,9 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
                        for k in ("bytes", "sha256"))):
             raise ValueError("HID replay lacks isolated producer or root readback proof")
     wake = proof.get("touch_home_wake", False)
+    qos = proof.get("touch_input_qos", False)
+    if type(qos) is not bool or (qos and not wake):
+        raise ValueError("input QoS requires the explicit physical HOME wake experiment")
     if type(wake) is not bool or (wake and (not capture or replay)):
         raise ValueError("HOME wake requires physical touch capture without synthetic replay")
     if wake:
@@ -110,10 +113,18 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
                 or wake_proof.get("home_button_count") != 1
                 or wake_proof.get("producer_rebuilt") is not False
                 or wake_proof.get("physical_touch_qualified") is not False
-                or wake_proof.get("logical_readback_changed") != ["/etc/rc.jobs"]
+                or wake_proof.get("logical_readback_changed") != (
+                    ["/etc/rc.jobs", "/lib/libredwood.dylib"] if qos else ["/etc/rc.jobs"])
                 or any(wake_proof.get("root", {}).get(k) != inputs["small_root"][k]
                        for k in ("bytes", "sha256"))):
             raise ValueError("physical HOME wake lacks wake-only root proof")
+        if qos:
+            from apply_chiron_touch_hid import UPSTREAM_INJECT
+            if (wake_proof.get("input_qos") is not True
+                    or wake_proof.get("input_consumer_rebuilt") is not True
+                    or wake_proof.get("input_qos_class") != "USER_INTERACTIVE"
+                    or wake_proof.get("input_source_base_sha256") != UPSTREAM_INJECT):
+                raise ValueError("input QoS lacks rebuilt pinned consumer proof")
     source = proof["source_build"]
     if (source.get("schema") != "chiron-driver-build-v1" or source.get("variant") != chosen["variant"]
             or source.get("cpu_count") != chosen["cpu_count"]):
@@ -342,11 +353,15 @@ def main():
                         help="Explicit synthetic replay root; disables the physical touch producer")
     parser.add_argument("--touch-home-wake-root", type=Path,
                         help="Wake-only root for physical capture; no synthetic touch records")
+    parser.add_argument("--touch-input-qos", action="store_true",
+                        help="Explicitly use the HOME root with the rebuilt input consumer")
     args = parser.parse_args()
     import apply_chiron_smp
     import cloud
 
     cloud.require_runner()
+    if args.touch_input_qos and not args.touch_home_wake_root:
+        parser.error("--touch-input-qos requires --touch-home-wake-root")
     if args.touch_home_wake_root and (
             args.variant != "touch" or not args.touch_capture or args.touch_hid_replay_root):
         parser.error("HOME wake root requires explicit physical --touch-capture")
@@ -450,6 +465,7 @@ def main():
         "hid_replay": hid_replay,
         "touch_home_wake": bool(home_wake),
         "home_wake": home_wake,
+        "touch_input_qos": args.touch_input_qos,
         "qup_writes": args.touch_active,
         "sensor_configuration_writes": args.touch_active,
         "clock_prepare": args.clock_prepare,

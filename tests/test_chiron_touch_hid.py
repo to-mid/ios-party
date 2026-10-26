@@ -19,6 +19,92 @@ UPSTREAM = Path("/private/tmp/chiron-hackios-reuse/userland/userland/src")
 
 
 class ReplayTests(unittest.TestCase):
+    def test_input_qos_fragment_requests_interactive_and_reports_failure_without_stopping(self):
+        if not (UPSTREAM / "inject.c").is_file() or not shutil.which("cc"):
+            self.skipTest("pinned input source or host compiler unavailable")
+        original = (UPSTREAM / "inject.c").read_bytes()
+        patched = hid.input_qos_source(original).decode()
+        fragment = patched.split('\tpthread_setname_np("redwood input");\n', 1)[1].split(
+            '\t{\n\t\tchar arguments', 1)[0]
+        restored = patched.replace(fragment, "", 1).replace("#include <sys/qos.h>\n", "", 1)
+        self.assertEqual(restored.encode(), original)
+        with tempfile.TemporaryDirectory(prefix="chiron-qos-") as folder:
+            p = Path(folder)
+            (p / "qos.inc").write_text(fragment)
+            (p / "host.c").write_text(r"""
+#include <assert.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
+typedef unsigned qos_class_t;
+#define QOS_CLASS_UNSPECIFIED 0
+#define QOS_CLASS_USER_INTERACTIVE 33
+static int failure, calls, queries, continued;
+static char logged[256];
+static int pthread_self(void) { return 7; }
+static int pthread_set_qos_class_self_np(qos_class_t q, int relative) {
+    assert(q == 33 && relative == 0); calls++; return failure ? 13 : 0;
+}
+static int pthread_get_qos_class_np(int thread, qos_class_t *q, int *relative) {
+    assert(thread == 7); queries++;
+    if (failure) return 5;
+    *q = 33; *relative = 0; return 0;
+}
+static void say(const char *format, ...) {
+    va_list args; va_start(args, format); vsnprintf(logged,sizeof(logged),format,args); va_end(args);
+}
+static void startup(void) {
+#include "qos.inc"
+    continued++;
+}
+int main(void) {
+    startup();
+    assert(calls == 1 && queries == 1 && continued == 1);
+    assert(strstr(logged,"request=0 query=0 class=33 relative=0"));
+    failure=1; startup();
+    assert(calls == 2 && queries == 2 && continued == 2);
+    assert(strstr(logged,"request=13 query=5 class=0 relative=0"));
+    return 0;
+}
+""")
+            r = subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
+                                "-fsanitize=address,undefined", "-I", str(p),
+                                str(p / "host.c"), "-o", str(p / "test")],
+                               capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            r = subprocess.run([str(p / "test")], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_input_qos_root_changes_only_home_job_and_consumer_library(self):
+        baseline = ROOT / "dist/chiron-hackios-39915264473/phone/root.apfs"
+        source = UPSTREAM.parents[1]
+        if not baseline.is_file() or not (source / "tools/apfs/apfs.py").is_file():
+            self.skipTest("local baseline or pinned APFS tools unavailable")
+        sys.path.insert(0, str(hid.HERE))
+        import cloud
+        command = cloud.command
+
+        def compile_or_run(args):
+            if args[0] == "host-test-compiler":
+                self.assertIn("/redwood/lib/libredwood.dylib", args)
+                Path(args[-1]).write_bytes(bytes.fromhex("cffaedfe0c00000100000000") +
+                                          b"chiron input: qos request=")
+            else:
+                command(args)
+
+        with tempfile.TemporaryDirectory(prefix="chiron-qos-root-") as folder:
+            with mock.patch.object(cloud, "require_runner"), \
+                 mock.patch.object(cloud, "command", side_effect=compile_or_run):
+                _, proof = hid.rebuild_root(baseline, Path(folder) / "result", source,
+                                           "host-test-compiler", "sdk", "ld",
+                                           wake_only=True, input_qos=True)
+            self.assertEqual(proof["logical_readback_changed"],
+                             ["/etc/rc.jobs", "/lib/libredwood.dylib"])
+            self.assertTrue(proof["input_qos"])
+            self.assertTrue(proof["input_consumer_rebuilt"])
+            self.assertFalse(proof["synthetic"])
+            self.assertFalse(proof["producer_rebuilt"])
+
     def test_physical_capture_root_only_wakes_without_rebuilding_or_replaying_touch(self):
         baseline = ROOT / "dist/chiron-hackios-39915264473/phone/root.apfs"
         source = UPSTREAM.parents[1]
@@ -63,6 +149,8 @@ class ReplayTests(unittest.TestCase):
     def test_unknown_source_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "pinned"):
             hid.replay_source(b"other source")
+        with self.assertRaisesRegex(ValueError, "pinned"):
+            hid.input_qos_source(b"other source")
 
     def test_single_finite_job_never_consumes_the_queue(self):
         lines = [s for s in (hid.HERE / "chiron_touch_hid.jobs").read_text().splitlines()

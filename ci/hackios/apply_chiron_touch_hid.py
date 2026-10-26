@@ -11,10 +11,28 @@ import sys
 
 HERE = Path(__file__).resolve().parent
 UPSTREAM_RWT = "013133a862b304dac018b5f86df4c88e630f381359bf82ea5d7fc38d7115fccc"
+UPSTREAM_INJECT = "7602d0ce95eb32e69ba54717d0ca680354269c2446d7846fc661b656dd99ab9c"
 
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def input_qos_source(original):
+    """Change only the input consumer's requested scheduling class."""
+    if digest(original) != UPSTREAM_INJECT:
+        raise ValueError("pinned input consumer source differs")
+    text = original.decode().replace(
+        "#include <pthread.h>\n", "#include <pthread.h>\n#include <sys/qos.h>\n", 1)
+    return text.replace(
+        '\tpthread_setname_np("redwood input");\n',
+        '\tpthread_setname_np("redwood input");\n'
+        '\tqos_class_t input_qos = QOS_CLASS_UNSPECIFIED;\n'
+        '\tint input_relative = 0;\n'
+        '\tint input_set = pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);\n'
+        '\tint input_get = pthread_get_qos_class_np(pthread_self(), &input_qos, &input_relative);\n'
+        '\tsay("chiron input: qos request=%d query=%d class=%u relative=%d\\n",\n'
+        '\t    input_set, input_get, (unsigned)input_qos, input_relative);\n', 1).encode()
 
 
 def replay_source(original):
@@ -101,11 +119,14 @@ def install(root, binary):
     }
 
 
-def rebuild_root(baseline, output, source, compiler=None, sdk=None, linker=None, *, wake_only=False):
+def rebuild_root(baseline, output, source, compiler=None, sdk=None, linker=None, *,
+                 wake_only=False, input_qos=False):
     """Repack only the small root and compare every logical entry after readback."""
     import cloud
 
     cloud.require_runner()
+    if input_qos and not wake_only:
+        raise ValueError("input QoS requires the physical HOME wake root")
     baseline, output, source = Path(baseline), Path(output), Path(source)
     output.mkdir(parents=True, exist_ok=False)
     tools = source / "tools/apfs"
@@ -156,6 +177,29 @@ def rebuild_root(baseline, output, source, compiler=None, sdk=None, linker=None,
             "jobs_sha256": digest(jobs),
             "reused_program": cloud.digest(root / "bin/rwtouch"),
         }
+        if input_qos:
+            patched = output / "inject.c"
+            patched.write_bytes(input_qos_source((source / "userland/src/inject.c").read_bytes()))
+            library = output / "libredwood.dylib"
+            cloud.command([
+                compiler, "-target", "arm64-apple-ios16.5", "--ld-path=" + str(linker),
+                "-include", source / "xnu-deps/hostinc/xnu_clang_compat.h",
+                "-isysroot", sdk, "-O1", "-dynamiclib",
+                "-install_name", "/redwood/lib/libredwood.dylib",
+                "-framework", "CoreFoundation", "-framework", "IOKit", "-lobjc",
+                "-I", source / "userland/src", patched, "-o", library,
+            ])
+            data = library.read_bytes()
+            if (data[:12] != bytes.fromhex("cffaedfe0c00000100000000")
+                    or b"chiron input: qos request=" not in data):
+                raise ValueError("rebuilt library lacks ARM64 consumer QoS code")
+            previous = cloud.digest(root / "lib/libredwood.dylib")
+            (root / "lib/libredwood.dylib").write_bytes(data)
+            proof.update(input_qos=True, input_consumer_rebuilt=True,
+                         input_qos_class="USER_INTERACTIVE",
+                         input_source_base_sha256=UPSTREAM_INJECT,
+                         input_source_sha256=digest(patched.read_bytes()),
+                         previous_library=previous, library=cloud.digest(library))
     else:
         patched = output / "rwtouch.c"
         patched.write_bytes(replay_source((source / "userland/src/rwtouch.c").read_bytes()))
@@ -174,6 +218,8 @@ def rebuild_root(baseline, output, source, compiler=None, sdk=None, linker=None,
         raise ValueError("replay repack changed root directory membership")
     changed = {p for p in original if original[p] != after[p]}
     expected = {"/etc/rc.jobs"} if wake_only else {"/etc/rc.jobs", "/bin/rwtouch"}
+    if input_qos:
+        expected.add("/lib/libredwood.dylib")
     if changed != expected:
         raise ValueError(f"replay repack changed unexpected entries: {sorted(changed)}")
     for path in changed:
@@ -203,6 +249,10 @@ def main():
     wake.add_argument("--baseline", type=Path, required=True)
     wake.add_argument("--work", type=Path, required=True)
     wake.add_argument("--output", type=Path, required=True)
+    qos = sub.add_parser("qos")
+    qos.add_argument("--baseline", type=Path, required=True)
+    qos.add_argument("--work", type=Path, required=True)
+    qos.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.mode == "source":
         args.output.write_bytes(replay_source(args.upstream.read_bytes()))
@@ -223,7 +273,8 @@ def main():
         cloud.prepare(args.work, evidence)
         rebuild_root(args.baseline, args.output, args.work / "kernel", "/usr/bin/clang",
                      args.work / "theos/sdks/iPhoneOS16.5.sdk",
-                     args.work / "theos/toolchain/linux/iphone/bin/ld")
+                     args.work / "theos/toolchain/linux/iphone/bin/ld",
+                     wake_only=args.mode == "qos", input_qos=args.mode == "qos")
 
 
 if __name__ == "__main__":
