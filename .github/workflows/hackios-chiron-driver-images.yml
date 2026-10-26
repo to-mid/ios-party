@@ -49,9 +49,13 @@ jobs:
         with:
           persist-credentials: false
       - name: Install EFI and FAT tools
+        timeout-minutes: 5
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang lld llvm mtools dosfstools libtinfo6 qemu-system-arm 7zip
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
+          fi
+          sudo apt-get -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=1 update
+          sudo apt-get -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=1 install -y --no-install-recommends clang lld llvm mtools dosfstools libtinfo6 qemu-system-arm 7zip
           if ! command -v 7z >/dev/null; then sudo ln -s "$(command -v 7zz)" /usr/local/bin/7z; fi
       - name: Test explicit experiment qualification and payload bindings
         run: |
