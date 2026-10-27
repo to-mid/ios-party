@@ -311,4 +311,34 @@ thread_select → ticket lock panic`。源码确认 CPU_ON 后的等待调用了
 CPU 类型、PSCI、GIC、ABI 或严格收核门禁，也未引入跨簇取任务算法。
 定向回归提取真实原版/补丁回调执行：原版双簇检测到锁未释放，
 补丁 SMP 版本允许调用者重新加锁；单簇不调用回调，非 SMP 保持原实现。
-完整内核编译及修复候选待云端结果；本地轻量检查、交付和硬件结果随后补记。
+本地 11 项 SMP 检查无跳过（含真实 loader ARM64 目标文件编译），
+7 项变体和 25 项手机载荷检查及 Python 语法通过。
+第一次本地尝试误用已打补丁的 loader 快照而失败；取回固定提交
+8e611870 的三个干净 loader 源文件后，完整 SMP 检查通过。
+
+提交 `d6f769271ed5673ad0d93bac31833e8db0c50353` 的八核触摸源构建
+`40442787624` 成功，内核 SHA-256 为
+`4139b5db0e15c4f60c6c4d4b68a55fbf116d7fd56ee578e977239cb5c0dc6075`。
+本地核对全部源产物哈希及空未定义符号表；实际未剥离内核的
+`sched_clutch_steal_thread` 已包含对 `lck_ticket_unlock` 的调用。
+总 make 仍退出 2，不表示全部上游导出目标通过。
+打包 `40443217086` 成功，新候选为
+`dist/chiron-driver-candidates/TOUCH-SMP8-QOS-40443217086/MIX2-EXPERIMENTAL-TOUCH-SMP8-QOS.img`，
+SHA-256 `a699eb1e7779b406ed8f530c2b8d4ae7800a658e5fb339f06097c0ec03752be8`。
+本地容器 SHA-256/legacy SHA-1、FAT/EFI/实际新内核来源、八核参数和容量绑定通过；
+固件、DTB、入口及已发布 QoS/HOME 小卷固定复用。
+同目录 START 给出本轮启动与
+`out/chiron-touch-smp8-qos-40443217086-run1.log` 取证命令。
+验收为越过原 CPU1 附近的锁 panic，继续启动 CPU2–CPU7 并观察是否进入桌面；
+无新增 QEMU/硬件资格，设备启动、上传及重启均由用户执行。
+
+### 修复候选的独立云端 QEMU
+
+用户反馈修复候选进入系统时强制重启，尚无本轮真机日志，不能确定是 panic、
+硬件复位或原有 300 秒返回。新增独立 `hackios-chiron-smp-qemu.yml`，
+复用源构建 40442787624 的原内核、镜像 40443217086 中的 QoS/HOME 小卷
+及固定哈希的大系统卷，不编译新内核或下载 IPSW。
+测试 loader 单独编译并匹配 QEMU 的四核一簇 MPIDR；先从真实 QEMU DTB
+检查 0–3/0x100–0x103，再运行八核双簇、540 秒预算并保存串口与截图。
+QEMU 使用 Cortex-A53、虚拟 PSCI/GIC 和关闭的手机触摸硬件；
+不会把结果授予 Kryo 异构核、QUP、手机固件或看门狗资格。结果待云端执行。

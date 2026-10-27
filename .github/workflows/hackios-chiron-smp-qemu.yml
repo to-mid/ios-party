@@ -1,0 +1,58 @@
+name: MIX2 delivered SMP kernel QEMU
+
+on:
+  push:
+    branches: ['codex/chiron-parallel-drivers']
+    paths:
+      - '.github/workflows/hackios-chiron-smp-qemu.yml'
+      - 'ci/hackios/recheck_chiron_smp.py'
+      - 'tests/test_chiron_smp_qemu.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  replay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install QEMU and loader tools
+        timeout-minutes: 5
+        run: |
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
+          fi
+          sudo apt-get -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=1 update
+          sudo apt-get -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=1 install -y --no-install-recommends \
+            qemu-system-arm qemu-efi-aarch64 ipxe-qemu clang lld llvm device-tree-compiler python3-pil
+      - name: Check validation logic
+        run: python3 -B -m unittest discover -s tests -p test_chiron_smp_qemu.py -v
+      - name: Download the exact delivered binaries and existing system volume
+        run: |
+          gh run download 40442787624 --repo "$GITHUB_REPOSITORY" \
+            --name chiron-driver-source-touch-smp8-40442787624 --dir dist/smp-source
+          gh run download 40443217086 --repo "$GITHUB_REPOSITORY" \
+            --name MIX2-EXPERIMENTAL-TOUCH-SMP8-QOS-40443217086 --dir dist/smp-phone
+          gh run download 39915264473 --repo "$GITHUB_REPOSITORY" \
+            --name chiron-ios165-system --dir dist/smp-system
+      - name: Run the same kernel and small root on eight CPUs in two clusters
+        run: |
+          python3 ci/hackios/recheck_chiron_smp.py \
+            --source dist/smp-source --source-run 40442787624 \
+            --phone dist/smp-phone/driver-image --system dist/smp-system/system.apfs \
+            --work "$RUNNER_TEMP/chiron-smp-qemu" --evidence dist/smp-qemu
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: chiron-smp-qemu-${{ github.run_id }}
+          path: dist/smp-qemu/
+          retention-days: 7
+          compression-level: 1
