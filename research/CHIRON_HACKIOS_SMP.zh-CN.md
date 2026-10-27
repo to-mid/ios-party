@@ -406,3 +406,29 @@ SHA-256 `45d02f3635dd44f653c7488a5a19ef6578d63e5aca573de36a15a92abef57cc7`。
 25 项载荷和 4 项 QEMU 判定检查通过。
 云端 QEMU 入口改为显式输入匹配的源构建/镜像编号，
 并要求两簇实际关联到同一个 pset；新构建、运行及候选结果待取得。
+
+源构建 40457193107、打包 40457536115 成功，源码提交
+`73ab5afe7a7f2b81967c4ba6846efb3c7f5bc298`。
+新内核 SHA-256 为 `a2882eecafd6377538efd28d7bd476c42e9a70884fc5711155d822532c25bea5`；
+未定义符号为空，仍保留总 make=2，不表示全部上游导出目标通过。
+实际 QEMU 运行 40457857698 显示七个次核全部在线、两簇均使用 pset0，
+无 panic，540 秒测试定时返回；宿主进程持续 569.265 秒。
+420/500 秒截图已目视确认为 SpringBoard 桌面，后期仍有持续换帧。
+
+该运行最初被自动判据误判：固定 QoS/HOME 小卷没有输出判据期待的 ps 列表，
+但 launchd 同时记录了两个桌面进程成功启动和 running 状态。
+仅修正证据判据并补充定向用例（本地现共 49 项相关检查通过），
+云端保存证据复核 40459663351 成功；没有重复执行内核。
+原 `qemu-result.json` 的失败标记保留，新的 `qualification.json` 明确记录
+runtime_run/qualification_run 和 `new_guest_execution=false`。
+实际运行证据在 `dist/chiron-smp-qemu-40457857698/`，
+复核证据在 `dist/chiron-smp-qemu-40459663351/`。
+
+新交付为
+`dist/chiron-driver-candidates/TOUCH-SMP8-QOS-40457536115/MIX2-EXPERIMENTAL-TOUCH-SMP8-QOS.img`，
+SHA-256 `75dce1f23799a71500228ef0bb23a92fd3900650ab2ba9addc0f0b7e113c465f`。
+容器/legacy SHA-1、FAT/EFI、新内核来源、八核参数及容量校验通过；
+固件、DTB、入口和大小系统卷固定复用。
+同目录包含 START、静态报告、独立 QEMU 复核报告和桌面截图，
+启动及取日志路径均绑定本轮编号。手机仍为 300 秒测试返回；
+无新增真机操作或资格，实际 Kryo 双簇、触摸和手机固件返回待用户确认。
