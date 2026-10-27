@@ -64,22 +64,70 @@ def observations(text):
         "eight_cpu_cache_init": "mcache: 8 CPU(s)" in text,
         "framebuffer_swaps": bool(re.search(r"MiniIOMobileFramebuffer: swap \d+", text)),
         "springboard_process": bool(re.search(
-            r"(?m)^\s*\d+\s+.*SpringBoard\.app/|top:.*SpringBoard\[\d+\]", text)),
+            r"(?m)^\s*\d+\s+.*SpringBoard\.app/|top:.*SpringBoard\[\d+\]", text) or (
+                re.search(r"Successfully spawned SpringBoard\[\d+\]", text) and
+                re.search(r"\([^)\r\n]*com\.apple\.SpringBoard \[\d+\]\).*service state: running", text))),
         "backboardd_process": bool(re.search(
-            r"(?m)^\s*\d+\s+.*(?:/usr/libexec/backboardd|backboardd\s*$)", text)),
+            r"(?m)^\s*\d+\s+.*(?:/usr/libexec/backboardd|backboardd\s*$)", text) or (
+                re.search(r"Successfully spawned backboardd\[\d+\]", text) and
+                re.search(r"\([^)\r\n]*com\.apple\.backboardd \[\d+\]\).*service state: running", text))),
         "fatal": bool(re.search(r"panic\(cpu|Undefined kernel instruction|initproc failed", text)),
         "timer_return": "loader_return_after expired" in text,
     }
 
 
+def qualify_saved(evidence):
+    from PIL import Image, ImageChops, ImageStat
+    recorded = json.loads((evidence / "qemu-result.json").read_text())
+    inputs = json.loads((evidence / "inputs.json").read_text())
+    seen = observations((evidence / "qemu-serial.log").read_text(errors="replace"))
+    frames = []
+    previous = None
+    for name in ("t0420.png", "t0500.png"):
+        with Image.open(evidence / "screens" / name) as opened:
+            image = opened.convert("RGB")
+        stat = ImageStat.Stat(image)
+        frame = {"name": name, "size": list(image.size),
+                 "nonuniform": max(stat.stddev) > 1}
+        if previous is not None:
+            frame["mean_pixel_difference"] = ImageStat.Stat(
+                ImageChops.difference(image, previous)).mean
+        previous = image
+        frames.append(frame)
+    passed = (all(seen[key] for key in (
+        "all_secondary_cpus_online", "both_clusters_registered", "shared_scheduler_pset",
+        "unused_affinities_off", "eight_cpu_cache_init", "framebuffer_swaps",
+        "springboard_process", "backboardd_process", "timer_return",
+    )) and not seen["fatal"] and recorded["returncode"] == 0
+        and recorded["host_seconds"] >= inputs["guest_seconds"]
+        and all(frame["nonuniform"] and frame["size"] == [1125, 2436] for frame in frames)
+        and max(frames[1]["mean_pixel_difference"]) > 0)
+    cloud.save(evidence / "qualification.json", {
+        **seen, "passed": bool(passed), "runtime_run": recorded["run_id"],
+        "qualification_run": os.environ["GITHUB_RUN_ID"], "inputs": inputs, "frames": frames,
+        "host_seconds": recorded["host_seconds"], "new_guest_execution": False,
+        "hardware_observed": False, "visual_review_required": True,
+        "scope": "Saved actual SMP execution and framebuffer evidence; not phone qualification",
+    })
+    if not passed:
+        raise RuntimeError("Saved SMP runtime evidence did not qualify")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--qualify-saved", type=Path)
     for name in ("source", "phone", "system", "work", "evidence"):
-        parser.add_argument("--" + name, type=Path, required=True)
-    parser.add_argument("--source-run", required=True)
+        parser.add_argument("--" + name, type=Path)
+    parser.add_argument("--source-run")
     parser.add_argument("--seconds", type=int, default=540)
     args = parser.parse_args()
     cloud.require_runner()
+    if args.qualify_saved is not None:
+        qualify_saved(args.qualify_saved)
+        return
+    if not all(getattr(args, name) for name in
+               ("source", "phone", "system", "work", "evidence", "source_run")):
+        parser.error("a replay requires source, phone, system, work, evidence and source-run")
     args.work, args.evidence = args.work.resolve(), args.evidence.resolve()
     args.evidence.mkdir(parents=True, exist_ok=True)
     source = verify_source(args.source, "touch-smp8", args.source_run)
@@ -193,7 +241,7 @@ def main():
                 "all_secondary_cpus_online", "both_clusters_registered", "shared_scheduler_pset",
                 "unused_affinities_off",
                 "eight_cpu_cache_init",
-                "framebuffer_swaps", "springboard_process", "backboardd_process",
+                "framebuffer_swaps", "springboard_process", "backboardd_process", "timer_return",
             )) and not seen["fatal"] and result["host_seconds"] >= args.seconds
             cloud.save(args.evidence / "qemu-result.json", result)
     if not result["passed"]:

@@ -33,6 +33,17 @@ class SmpQemuTests(unittest.TestCase):
         self.assertTrue(observations(original.replace("returned pset 1", "returned pset 0"))[
             "shared_scheduler_pset"])
 
+    def test_launchd_running_and_successful_spawn_confirm_real_daemons(self):
+        log = ""
+        for daemon in ("SpringBoard", "backboardd"):
+            prefix = f"(user/501/com.apple.{daemon} [7]) <Notice>: "
+            spawned = f"Successfully spawned {daemon}[7] because system support"
+            key = "springboard_process" if daemon == "SpringBoard" else "backboardd_process"
+            self.assertFalse(observations(prefix + "pending spawn")[key])
+            self.assertFalse(observations(prefix + spawned)[key])
+            log += prefix + "service state: running\n" + prefix + spawned + "\n"
+            self.assertTrue(observations(log)[key])
+
     def test_all_seven_secondary_cpus_and_panic_are_independent_observations(self):
         log = "\n".join(f"arm_cpu_init(): cpu {cpu} online" for cpu in range(1, 8))
         self.assertTrue(observations(log)["all_secondary_cpus_online"])

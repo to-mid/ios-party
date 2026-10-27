@@ -6,11 +6,15 @@ on:
       source_run:
         description: Successful touch-smp8 source build
         type: string
-        required: true
+        required: false
       phone_run:
         description: Matching touch-smp8-qos phone image build
         type: string
-        required: true
+        required: false
+      runtime_run:
+        description: Requalify saved actual execution without running a guest again
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -25,11 +29,13 @@ jobs:
       PYTHONDONTWRITEBYTECODE: '1'
       SOURCE_RUN: ${{ inputs.source_run }}
       PHONE_RUN: ${{ inputs.phone_run }}
+      RUNTIME_RUN: ${{ inputs.runtime_run }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
       - name: Install QEMU and loader tools
+        if: inputs.runtime_run == ''
         timeout-minutes: 5
         run: |
           if [ -f /etc/apt/apt-mirrors.txt ]; then
@@ -38,15 +44,20 @@ jobs:
           sudo apt-get -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=1 update
           sudo apt-get -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=1 install -y --no-install-recommends \
             qemu-system-arm qemu-efi-aarch64 ipxe-qemu clang lld llvm device-tree-compiler python3-pil
+      - name: Install saved-frame verification dependency
+        if: inputs.runtime_run != ''
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends python3-pil
       - name: Check validation logic
         run: python3 -B -m unittest discover -s tests -p test_chiron_smp_qemu.py -v
       - name: Download the exact delivered binaries and existing system volume
+        if: inputs.runtime_run == ''
         run: |
           gh run download "$SOURCE_RUN" --repo "$GITHUB_REPOSITORY" \
             --name "chiron-driver-source-touch-smp8-$SOURCE_RUN" --dir dist/smp-source
           gh run download "$PHONE_RUN" --repo "$GITHUB_REPOSITORY" \
             --name "MIX2-EXPERIMENTAL-TOUCH-SMP8-QOS-$PHONE_RUN" --dir dist/smp-phone
       - name: Download the received system volume
+        if: inputs.runtime_run == ''
         run: |
           for ATTEMPT in $(seq 1 35); do
             ID=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/40446750621/artifacts" \
@@ -61,11 +72,18 @@ jobs:
           echo "Original system artifact was not finalized in time" >&2
           exit 1
       - name: Run the same kernel and small root on eight CPUs in two clusters
+        if: inputs.runtime_run == ''
         run: |
           python3 ci/hackios/recheck_chiron_smp.py \
             --source dist/smp-source --source-run "$SOURCE_RUN" \
             --phone dist/smp-phone/driver-image --system dist/smp-system/system.apfs \
             --work "$RUNNER_TEMP/chiron-smp-qemu" --evidence dist/smp-qemu
+      - name: Requalify the saved actual execution and late frames
+        if: inputs.runtime_run != ''
+        run: |
+          gh run download "$RUNTIME_RUN" --repo "$GITHUB_REPOSITORY" \
+            --name "chiron-smp-qemu-$RUNTIME_RUN" --dir dist/smp-qemu
+          python3 ci/hackios/recheck_chiron_smp.py --qualify-saved dist/smp-qemu
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
