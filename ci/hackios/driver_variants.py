@@ -13,6 +13,7 @@ VARIANTS = {
     "baseline": {"cpu_count": 1, "touch": False},
     "touch": {"cpu_count": 1, "touch": True},
     "touch-smp2": {"cpu_count": 2, "touch": True},
+    "touch-smp4": {"cpu_count": 4, "touch": True},
     "touch-smp8": {"cpu_count": 8, "touch": True},
     "smp2": {"cpu_count": 2, "touch": False},
     "smp4": {"cpu_count": 4, "touch": False},

@@ -8,7 +8,7 @@ on:
         type: choice
         required: true
         default: smp
-        options: [smp, touch-probe, touch-clock-probe, touch-pinmux-probe, touch-reset-probe, touch-l6-probe, touch-l6-trace, touch-l6-abi, touch-l6-capture, touch-active, touch-desktop, touch-capture, touch-hid-replay, touch-capture-wake, touch-input-qos, touch-smp2-qos, touch-smp8-qos]
+        options: [smp, touch-probe, touch-clock-probe, touch-pinmux-probe, touch-reset-probe, touch-l6-probe, touch-l6-trace, touch-l6-abi, touch-l6-capture, touch-active, touch-desktop, touch-capture, touch-hid-replay, touch-capture-wake, touch-input-qos, touch-smp2-qos, touch-smp4-qos, touch-smp8-qos]
       touch_source_run:
         description: Successful touch source build run for touch-probe
         type: string
@@ -26,7 +26,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        cpu_count: ${{ fromJSON(inputs.variant == 'touch-smp8-qos' && '[8]' || inputs.variant == 'touch-smp2-qos' && '[2]' || startsWith(inputs.variant, 'touch-') && '[1]' || '[2,8]') }}
+        cpu_count: ${{ fromJSON(inputs.variant == 'touch-smp8-qos' && '[8]' || inputs.variant == 'touch-smp4-qos' && '[4]' || inputs.variant == 'touch-smp2-qos' && '[2]' || startsWith(inputs.variant, 'touch-') && '[1]' || '[2,8]') }}
     env:
       GH_TOKEN: ${{ github.token }}
       PYTHONDONTWRITEBYTECODE: '1'

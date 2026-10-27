@@ -158,7 +158,7 @@ def combined_fixture(count):
 
 class ExperimentAdmissionTests(unittest.TestCase):
     def test_combined_touch_smp_requires_both_kernel_markers_and_strict_return(self):
-        for count in (2, 8):
+        for count in (2, 4, 8):
             proof, inputs, payload = combined_fixture(count)
             kernel = phone.payload_entries(payload)["kernel"]
             phone.admit_qualification(proof, inputs, payload, True)

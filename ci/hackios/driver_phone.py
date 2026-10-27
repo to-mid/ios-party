@@ -75,7 +75,7 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
     if proof.get("schema") != SCHEMA or inputs.get("driver_experiment") != proof:
         raise ValueError("experimental proof differs from phone inputs")
     chosen = selection(proof.get("variant", ""))
-    if chosen["variant"] not in ("smp2", "smp8", "touch", "touch-smp2", "touch-smp8") or proof.get("cpu_count") != chosen["cpu_count"]:
+    if chosen["variant"] not in ("smp2", "smp8", "touch", "touch-smp2", "touch-smp4", "touch-smp8") or proof.get("cpu_count") != chosen["cpu_count"]:
         raise ValueError("unsupported phone experiment")
     desktop = proof.get("touch_desktop", False)
     if type(desktop) is not bool or (desktop and
@@ -294,7 +294,7 @@ def verify_source(folder, variant, source_run, clock_prepare=False, pinmux_prepa
     proof = json.loads((folder / "driver-build.json").read_text())
     chosen = selection(variant)
     if (proof.get("schema") != "chiron-driver-build-v1"
-            or variant not in ("smp2", "smp8", "touch", "touch-smp2", "touch-smp8") or proof.get("variant") != variant):
+            or variant not in ("smp2", "smp8", "touch", "touch-smp2", "touch-smp4", "touch-smp8") or proof.get("variant") != variant):
         raise ValueError("wrong source artifact variant")
     if proof.get("source_build_run") != source_run or proof.get("cpu_count") != chosen["cpu_count"]:
         raise ValueError("wrong source build run or CPU count")
@@ -350,7 +350,7 @@ def main():
     parser.add_argument("--runtime", type=Path, required=True)
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--variant", choices=("smp2", "smp8", "touch", "touch-smp2", "touch-smp8"), required=True)
+    parser.add_argument("--variant", choices=("smp2", "smp8", "touch", "touch-smp2", "touch-smp4", "touch-smp8"), required=True)
     parser.add_argument("--clock-prepare", action="store_true")
     parser.add_argument("--pinmux-prepare", action="store_true")
     parser.add_argument("--reset-prepare", action="store_true")
@@ -376,7 +376,7 @@ def main():
     if args.touch_input_qos and not args.touch_home_wake_root:
         parser.error("--touch-input-qos requires --touch-home-wake-root")
     if args.touch_home_wake_root and (
-            args.variant not in ("touch", "touch-smp2", "touch-smp8") or not args.touch_capture or args.touch_hid_replay_root):
+            args.variant not in ("touch", "touch-smp2", "touch-smp4", "touch-smp8") or not args.touch_capture or args.touch_hid_replay_root):
         parser.error("HOME wake root requires explicit physical --touch-capture")
     if args.touch_hid_replay_root and (
             args.variant != "touch" or any((args.touch_active, args.touch_capture,
@@ -388,7 +388,7 @@ def main():
     if args.touch_desktop or args.touch_capture:
         args.touch_active = True
     if args.touch_active:
-        if args.variant not in ("touch", "touch-smp2", "touch-smp8") or args.l6_prepare or args.l6_abi or args.l6_capture:
+        if args.variant not in ("touch", "touch-smp2", "touch-smp4", "touch-smp8") or args.l6_prepare or args.l6_abi or args.l6_capture:
             parser.error("--touch-active requires touch and retained power without L6 experiments")
         args.reset_prepare = True
     if args.l6_capture:
@@ -402,7 +402,7 @@ def main():
         args.pinmux_prepare = True
     if args.pinmux_prepare:
         args.clock_prepare = True
-    if args.clock_prepare and args.variant not in ("touch", "touch-smp2", "touch-smp8"):
+    if args.clock_prepare and args.variant not in ("touch", "touch-smp2", "touch-smp4", "touch-smp8"):
         parser.error("clock/pinmux preparation requires the touch variant")
     source = verify_source(args.source_build, args.variant, args.source_run,
                            args.clock_prepare, args.pinmux_prepare, args.touch_active, args.touch_capture)
