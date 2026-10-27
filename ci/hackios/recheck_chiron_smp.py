@@ -84,7 +84,8 @@ def main():
     system_digest = cloud.digest(args.system)
     if (qualification["source_build_run"] != args.source_run
             or content_digest(entries["kernel"]) != source["artifacts"]["kernel.development.hackios"]
-            or content_digest(entries["ramdisk"]) != manifest["phone_inputs"]["small_root"]
+            or any(content_digest(entries["ramdisk"])[key] != manifest["phone_inputs"]["small_root"][key]
+                   for key in ("bytes", "sha256"))
             or any(system_digest[key] != manifest["phone_inputs"]["system_root"][key]
                    for key in ("bytes", "sha256"))):
         raise ValueError("QEMU inputs differ from the delivered kernel/root")

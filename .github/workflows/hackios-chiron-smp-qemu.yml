@@ -41,8 +41,49 @@ jobs:
             --name chiron-driver-source-touch-smp8-40442787624 --dir dist/smp-source
           gh run download 40443217086 --repo "$GITHUB_REPOSITORY" \
             --name MIX2-EXPERIMENTAL-TOUCH-SMP8-QOS-40443217086 --dir dist/smp-phone
-          gh run download 39915264473 --repo "$GITHUB_REPOSITORY" \
-            --name chiron-ios165-system --dir dist/smp-system
+      - name: Prepare the temporary system-volume transfer
+        run: npm install --prefix "$RUNNER_TEMP/artifact-client" --ignore-scripts @actions/artifact@2.3.2
+      - name: Receive the original local system volume as an Actions artifact
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const base = path.join(process.env.RUNNER_TEMP, 'artifact-client/node_modules/@actions/artifact');
+            const {internalArtifactTwirpClient} = require(path.join(base, 'lib/internal/shared/artifact-twirp-client.js'));
+            const {getBackendIdsFromToken} = require(path.join(base, 'lib/internal/shared/util.js'));
+            const {getExpiration} = require(path.join(base, 'lib/internal/upload/retention.js'));
+            const {DefaultArtifactClient} = require(base);
+            const client = internalArtifactTwirpClient();
+            const ids = getBackendIdsFromToken();
+            const name = 'chiron-ios165-system-replay';
+            const created = await client.CreateArtifact({...ids, name, version: 4, expiresAt: getExpiration(1)});
+            if (!created.ok || !created.signedUploadUrl) throw new Error('System transfer creation failed');
+            core.setSecret(created.signedUploadUrl);
+            const handshake = path.join(process.env.RUNNER_TEMP, 'system-transfer');
+            fs.mkdirSync(handshake);
+            const file = path.join(handshake, 'transfer.json');
+            fs.writeFileSync(file, JSON.stringify({url: created.signedUploadUrl}), {mode: 0o600});
+            await new DefaultArtifactClient().uploadArtifact('smp-system-transfer', [file], handshake, {retentionDays: 1});
+            fs.unlinkSync(file);
+            for (let attempt = 0; attempt < 60; attempt++) {
+              try {
+                const done = await client.FinalizeArtifact({
+                  ...ids, name, size: '2407799015',
+                  hash: {value: 'sha256:f45ac9f41df467113d853441b4fa216cfb222c05fa0dfa89dc7e4ef7551c97b5'}
+                });
+                if (done.ok) {
+                  core.info('Original system archive received; hash validation follows');
+                  return;
+                }
+              } catch (_) {}
+              await new Promise(resolve => setTimeout(resolve, 10000));
+            }
+            throw new Error('Original local system transfer timed out');
+      - name: Download the received system volume
+        run: |
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name chiron-ios165-system-replay --dir dist/smp-system
       - name: Run the same kernel and small root on eight CPUs in two clusters
         run: |
           python3 ci/hackios/recheck_chiron_smp.py \
