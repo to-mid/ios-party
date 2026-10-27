@@ -1,13 +1,16 @@
 name: MIX2 delivered SMP kernel QEMU
 
 on:
-  push:
-    branches: ['codex/chiron-parallel-drivers']
-    paths:
-      - '.github/workflows/hackios-chiron-smp-qemu.yml'
-      - 'ci/hackios/recheck_chiron_smp.py'
-      - 'tests/test_chiron_smp_qemu.py'
   workflow_dispatch:
+    inputs:
+      source_run:
+        description: Successful touch-smp8 source build
+        type: string
+        required: true
+      phone_run:
+        description: Matching touch-smp8-qos phone image build
+        type: string
+        required: true
 
 permissions:
   contents: read
@@ -20,6 +23,8 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       PYTHONDONTWRITEBYTECODE: '1'
+      SOURCE_RUN: ${{ inputs.source_run }}
+      PHONE_RUN: ${{ inputs.phone_run }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -37,10 +42,10 @@ jobs:
         run: python3 -B -m unittest discover -s tests -p test_chiron_smp_qemu.py -v
       - name: Download the exact delivered binaries and existing system volume
         run: |
-          gh run download 40442787624 --repo "$GITHUB_REPOSITORY" \
-            --name chiron-driver-source-touch-smp8-40442787624 --dir dist/smp-source
-          gh run download 40443217086 --repo "$GITHUB_REPOSITORY" \
-            --name MIX2-EXPERIMENTAL-TOUCH-SMP8-QOS-40443217086 --dir dist/smp-phone
+          gh run download "$SOURCE_RUN" --repo "$GITHUB_REPOSITORY" \
+            --name "chiron-driver-source-touch-smp8-$SOURCE_RUN" --dir dist/smp-source
+          gh run download "$PHONE_RUN" --repo "$GITHUB_REPOSITORY" \
+            --name "MIX2-EXPERIMENTAL-TOUCH-SMP8-QOS-$PHONE_RUN" --dir dist/smp-phone
       - name: Download the received system volume
         run: |
           for ATTEMPT in $(seq 1 35); do
@@ -58,7 +63,7 @@ jobs:
       - name: Run the same kernel and small root on eight CPUs in two clusters
         run: |
           python3 ci/hackios/recheck_chiron_smp.py \
-            --source dist/smp-source --source-run 40442787624 \
+            --source dist/smp-source --source-run "$SOURCE_RUN" \
             --phone dist/smp-phone/driver-image --system dist/smp-system/system.apfs \
             --work "$RUNNER_TEMP/chiron-smp-qemu" --evidence dist/smp-qemu
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

@@ -342,6 +342,37 @@ SHA-256 `a699eb1e7779b406ed8f530c2b8d4ae7800a658e5fb339f06097c0ec03752be8`。
 检查 0–3/0x100–0x103，再运行八核双簇、540 秒预算并保存串口与截图。
 QEMU 使用 Cortex-A53、虚拟 PSCI/GIC 和关闭的手机触摸硬件；
 不会把结果授予 Kryo 异构核、QUP、手机固件或看门狗资格。结果待云端执行。
+首轮 40445035503 停在旧大系统卷 artifact 缺失，QEMU 尚未执行。
+改为把本机哈希已确认的原卷上传到有时限的 Actions artifact，
+由同一 job 校验、使用；不提交系统卷或上传授权 URL 到 Git。
+同时修正小卷清单带 CRC32 时的比较，只按既有门禁比较字节数及 SHA-256。
+
+实际运行 `40452995907` 已取得**八核上线后 panic**，系统启动资格失败。
+原卷补传保存于运行 40446750621 的限时 `chiron-ios165-system-replay` artifact；
+该运行自身停在旧机型缺失 option ROM，未执行 XNU。
+最终入口使用 QEMU virt/GICv3 的 20 个虚拟槽位，从真实 DTB 选择
+0–3/0x100–0x103 八个 affinity，loader 确认另外 12 个为 OFF；
+将测试 loader 的 GICR 区间扩为 20 帧，仅用于模拟器。该 loader 的实际 ARM64
+目标文件编译通过，手机 loader/内核及系统输入均未修改。
+
+`dist/chiron-smp-qemu-40452995907/inputs.json` 确认实际内核仍为 4139b5db、
+QoS/HOME 小卷 f08dd1fe、原大卷 f781f611。原始串口显示 CPU1–CPU7 全部
+`arm_cpu_init(): ... online`，以及 `GenericARMPE: 8 of 8 processors are running`。
+随后 CPU1 报
+`Ticket lock ... unexpectedly not owned ... @lock_ticket.c:152`；
+约 18 秒即结束，未进入桌面，未到 540 秒测试返回。
+原始日志及结构化失败结果分别为该目录的 `qemu-serial.log`、`qemu-result.json`。
+
+同一内核符号表将锁定位为 `pset0+0x100`，调用链为
+`sched_clutch_processor_enqueue+0x1c0 → thread_setrun → clear_wait →
+thread_start → _IOConfigThread::configThread → GenericARMPE::start`。
+反汇编在 enqueue 返回地址前直接断言持有 `pset0` 锁。
+源码的非 CONFIG_SCHED_EDGE 分支在共享 bucket 统计中固定使用
+`pset0.pset_clutch_root`，与两个独立 pset 的当前配置不兼容。
+上一轮空回调解锁只修复了首个启动故障，仍未完成双簇调度适配；
+下一轮应修正调度配置/共享统计的锁归属，不能删除锁断言来授予运行资格。
+该软件缺陷已在同构 A53 模型复现，但不能据此断言手机此次重启的精确原因。
+手机只读 ADB 记录为 bootreason=bootloader、pstore 空，未取得本轮 XNU 真机日志。
 
 ### 四核触摸组合
 
@@ -349,4 +380,29 @@ QEMU 使用 Cortex-A53、虚拟 PSCI/GIC 和关闭的手机触摸硬件；
 沿用触摸、HOME、QoS、300 秒返回及严格收核检查；复用固定用户态、固件和系统卷，
 云端独立编译四核内核与 loader。不修改 SMP ABI、PSCI、GIC 或调度实现。
 本地 7 项变体、25 项载荷检查通过，组合用例覆盖 2/4/8；
-四核云端构建、打包及实机结果待取得，不继承双核用户反馈的运行资格。
+四核触摸 loader ARM64 目标文件编译及交接前 OFF 检查通过。
+源构建 `40445633354`、打包 `40445959350` 成功，提交
+`2f22672ea9616c9b2d8aac36cfe3c9a263e7c523`；候选
+`dist/chiron-driver-candidates/TOUCH-SMP4-QOS-40445959350/MIX2-EXPERIMENTAL-TOUCH-SMP4-QOS.img`，
+SHA-256 `45d02f3635dd44f653c7488a5a19ef6578d63e5aca573de36a15a92abef57cc7`。
+内核 SHA-256 `88da5b71ce299f17cb480f331eca5e83a454126efafb8b740fbf43769a374157`，
+已链接且未定义符号为空；总 make=2 仍来自上游导出名单检查。
+本地容器/legacy SHA-1、FAT/EFI、实际内核来源、四核参数及容量绑定通过，
+与双核包直接比较确认固件、入口、大小系统卷及非核数 profile/运行参数一致。
+同目录 START 提供启动与本轮日志命令；未进行四核 QEMU/真机运行，
+不继承双核用户反馈的运行资格。
+
+### Clutch 单一调度集合修正
+
+本轮只修改 CHIRON_SMP + 普通 Clutch 的 CPU 注册，将所有八核关联到
+`pset0`，满足非 Edge Clutch 共享 bucket 统计的锁约定。
+物理 `cpu_cluster_id`、两簇拓扑、MPIDR、cluster master、PSCI/GIC、
+启动等待和严格收核均保留；没有删除断言或开启 Apple 专用寄存器路径。
+目标为双簇八核在共享调度集合中完成系统启动，大小核调优另行验证。
+
+新增回归执行真实的 bucket 统计函数及注册选集片段：旧配置在第二簇触发
+持锁失败，新配置更新八核统计通过，并检查每核物理簇字段保留；
+非 CHIRON 构建仍走原分支。12 项 SMP 检查无跳过，另有 7 项变体、
+25 项载荷和 4 项 QEMU 判定检查通过。
+云端 QEMU 入口改为显式输入匹配的源构建/镜像编号，
+并要求两簇实际关联到同一个 pset；新构建、运行及候选结果待取得。

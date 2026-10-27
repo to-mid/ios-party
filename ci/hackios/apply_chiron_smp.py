@@ -154,6 +154,15 @@ def kernel_overlay(xnu_tree: Path, strict_firmware_return=False) -> dict:
     ):
         text = replace_once(text, "#if HAS_CLUSTER\n" + context,
                             "#if HAS_CLUSTER || defined(CHIRON_SMP)\n" + context)
+    text = replace_once(
+        text, "\tpset = pset_find(in_processor_info->cluster_id, NULL);",
+        "#if defined(CHIRON_SMP) && CONFIG_SCHED_CLUTCH && !CONFIG_SCHED_EDGE\n"
+        "\t/* Clutch's SMP bucket statistics share pset0's lock across physical clusters. */\n"
+        "\tpset = &pset0;\n"
+        "#else\n"
+        "\tpset = pset_find(in_processor_info->cluster_id, NULL);\n"
+        "#endif",
+    )
     edits[machine] = text
     start = (xnu_tree / "osfmk/arm64/start.s").read_text()
     if "#if HAS_CLUSTER || defined(GENERIC_PSCI_SMP)" not in start or "#0xFFFF" not in start:

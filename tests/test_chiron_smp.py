@@ -435,6 +435,75 @@ int main(void) {
             self.compile_and_run(host + callback(patched) + main, expected_returncode=42)
             self.compile_and_run(host + callback(patched) + main, ["-DCHIRON_SMP=1"])
 
+    def test_clutch_shared_bucket_lock_preserves_both_physical_clusters(self):
+        with tempfile.TemporaryDirectory(prefix="chiron-smp-pset-") as directory:
+            root = Path(directory)
+            self.copy_kernel_inputs(root)
+            original = (root / "osfmk/arm64/machine_routines.c").read_text()
+            smp.kernel_overlay(root)
+            patched = (root / "osfmk/arm64/machine_routines.c").read_text()
+            clutch = (root / "osfmk/kern/sched_clutch.c").read_text()
+            begin = clutch.index("static void\nsched_clutch_bucket_group_thr_count_inc(",
+                                 clutch.index("#else /* CONFIG_SCHED_EDGE */",
+                                              clutch.index("sched_clutch_bucket_group_thr_count_inc(")))
+            increment = clutch[begin:clutch.index("\n}\n", begin) + 3]
+            def lookup(text):
+                begin = text.index("\tlck_mtx_lock(&pset_create_lock);")
+                begin = text.index("\n", begin) + 1
+                return text[begin:text.index("\tkprintf(", begin)]
+            host = r"""
+#include <assert.h>
+#include <setjmp.h>
+#include <stddef.h>
+#include <stdint.h>
+typedef struct { int locked; } root_t;
+struct pset { root_t pset_clutch_root; };
+static struct pset pset0, pset1;
+typedef struct pset *processor_set_t;
+struct bucket { struct { unsigned scct_count; uint64_t scct_timestamp; } scbg_pending_data; };
+typedef struct bucket *sched_clutch_bucket_group_t;
+static jmp_buf bad_lock;
+static void sched_clutch_hierarchy_locked_assert(root_t *root) {
+    if (!root->locked) longjmp(bad_lock, 1);
+}
+static processor_set_t __attribute__((unused)) pset_find(int cluster, void *unused) {
+    (void)unused; return cluster ? &pset1 : &pset0;
+}
+"""
+            registration = r"""
+static processor_set_t register_cpu(unsigned cluster) {
+    struct { unsigned cluster_id; } data = { cluster }, *in_processor_info = &data;
+    struct { unsigned cpu_cluster_id; } cpu_data, *this_cpu_datap = &cpu_data;
+    processor_set_t pset;
+"""
+            assignment = "\tthis_cpu_datap->cpu_cluster_id = in_processor_info->cluster_id;\n"
+            self.assertIn(assignment, original)
+            self.assertIn(assignment, patched)
+            main = r"""
+    assert(this_cpu_datap->cpu_cluster_id == cluster);
+    return pset;
+}
+int main(void) {
+    struct bucket group = {0};
+    if (setjmp(bad_lock)) return 42;
+    for (unsigned cpu = 0; cpu < 8; cpu++) {
+        processor_set_t pset = register_cpu(cpu / 4);
+        pset->pset_clutch_root.locked = 1;
+        sched_clutch_bucket_group_thr_count_inc(&group, cpu + 1);
+        pset->pset_clutch_root.locked = 0;
+    }
+    assert(group.scbg_pending_data.scct_count == 8);
+    return 0;
+}
+"""
+            self.compile_and_run(host + increment + registration +
+                                 assignment + lookup(original) + main, expected_returncode=42)
+            fixed = (host + increment + registration +
+                     assignment + lookup(patched) + main)
+            self.compile_and_run(fixed, ["-DCHIRON_SMP=1", "-DCONFIG_SCHED_CLUTCH=1",
+                                        "-DCONFIG_SCHED_EDGE=0"])
+            self.compile_and_run(fixed, ["-DCONFIG_SCHED_CLUTCH=1"], expected_returncode=42)
+
     def test_strict_touch_return_never_resumes_firmware_without_off_confirmation(self):
         with tempfile.TemporaryDirectory(prefix="chiron-touch-smp-return-") as directory:
             root = Path(directory)

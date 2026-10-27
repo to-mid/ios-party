@@ -27,6 +27,12 @@ class SmpQemuTests(unittest.TestCase):
         self.assertFalse(seen["all_secondary_cpus_online"])
         self.assertFalse(seen["springboard_process"])
 
+    def test_physical_clusters_share_the_clutch_scheduler_pset(self):
+        original = "pset_find(cluster_id=0) returned pset 0\npset_find(cluster_id=1) returned pset 1"
+        self.assertFalse(observations(original)["shared_scheduler_pset"])
+        self.assertTrue(observations(original.replace("returned pset 1", "returned pset 0"))[
+            "shared_scheduler_pset"])
+
     def test_all_seven_secondary_cpus_and_panic_are_independent_observations(self):
         log = "\n".join(f"arm_cpu_init(): cpu {cpu} online" for cpu in range(1, 8))
         self.assertTrue(observations(log)["all_secondary_cpus_online"])

@@ -52,11 +52,14 @@ def loader_topology(text):
 def observations(text):
     online = sorted({int(cpu) for cpu in re.findall(r"arm_cpu_init\(\): cpu ([1-7]) online", text)})
     clusters = sorted({int(c) for c in re.findall(r"cluster_id ([01]) cpu_number", text)})
+    psets = {(int(cluster), int(pset)) for cluster, pset in re.findall(
+        r"pset_find\(cluster_id=(\d+)\) returned pset (\d+)", text)}
     return {
         "secondary_cpus_online": online,
         "clusters_registered": clusters,
         "all_secondary_cpus_online": online == list(range(1, 8)),
         "both_clusters_registered": clusters == [0, 1],
+        "shared_scheduler_pset": psets == {(0, 0), (1, 0)},
         "unused_affinities_off": "qemu smp: 12 unused affinities confirmed OFF" in text,
         "eight_cpu_cache_init": "mcache: 8 CPU(s)" in text,
         "framebuffer_swaps": bool(re.search(r"MiniIOMobileFramebuffer: swap \d+", text)),
@@ -187,7 +190,8 @@ def main():
                 "hardware_observed": False, "physical_touch_qualified": False,
             }
             result["passed"] = all(seen[key] for key in (
-                "all_secondary_cpus_online", "both_clusters_registered", "unused_affinities_off",
+                "all_secondary_cpus_online", "both_clusters_registered", "shared_scheduler_pset",
+                "unused_affinities_off",
                 "eight_cpu_cache_init",
                 "framebuffer_swaps", "springboard_process", "backboardd_process",
             )) and not seen["fatal"] and result["host_seconds"] >= args.seconds
