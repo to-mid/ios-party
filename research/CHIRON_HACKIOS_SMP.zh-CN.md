@@ -258,3 +258,57 @@ XNUP。打包器必须显式使用 `--source-experiment`，逐项读取实际 XN
 参数/来源/组合用例扩展覆盖 2 与 8；35 项相关检查通过，
 固定源码集成类因本地缓存缺失跳过；工作流 YAML/shell 语法通过。
 源/加载器编译及八核实际在线、触摸、返回、性能仍待取得，不继承旧独立 SMP8 或双核资格。
+
+八核源构建 `40438258735` 和打包 `40438983828` 已成功，提交
+`c4b26069bfc76b20c4777ec8497d2fbc56b2d9fa`。
+交付 `dist/chiron-driver-candidates/TOUCH-SMP8-QOS-40438983828/MIX2-EXPERIMENTAL-TOUCH-SMP8-QOS.img`，
+SHA-256 `9483a0a6265c3f638549235ae64407771c78f95475498db3150fb714e2647bdb`。
+内核 SHA-256 `65900a6f5937810df0e6251440119b2fd8ea99558cd981ff135b5625d7e5111f`，
+链接完成且未定义符号为空，保留总 make=2 记录。
+云端源/打包及本地容器/FAT/EFI/来源/八核参数/容量验证通过。
+固件、DTB、入口、QoS/HOME 小卷及原系统卷保持，profile 核数为 8。
+START 给出独立八核命令和 `out/chiron-touch-smp8-qos-40438983828-run1.log` 取证路径；
+无新增 QEMU/手机操作，全部八核实机资格仍待本轮硬件反馈。
+
+### 2026-10-27 八核组合首轮实机日志
+
+只读 `fastboot get_staged` 已取回
+`out/chiron-touch-smp8-qos-40438983828-run1.log`，SHA-256 为
+`ae9f037eee8f4593385c193289816740a2a8358b2636b7c4b395d0448512d0c4`。
+loader selected 8、内核 ABI validated 8 均出现，CPU0–CPU7 完成注册；
+实际启动记录只到 CPU1，并出现 `arm_cpu_init(): cpu 1 online`。
+CPU0 随后报告 `Ticket lock ... is unexpectedly owned by thread ... @lock_ticket.c:143`；
+日志没有 CPU2–CPU7 的 `cpu_start`，不能记为八核上线，也没有本轮桌面/触摸资格。
+
+使用源构建 40438258735 的符号表解析，锁地址 `0xfffffff007ac8880`
+对应 `pset0+0x100`，调用链为
+`psci_smp_start_cpu+0x2d0 → delay_for_interval+0x8c → thread_block_reason →
+thread_select → ticket lock panic`。源码确认 CPU_ON 后的等待调用了可进入
+`thread_block` 的 `delay_for_interval(1, NSEC_PER_MSEC)`；这是下一轮应聚焦的
+启动等待/调度路径，尚不能仅据栈证明锁重入或所有权异常的根因。
+`cpu_signal failed in DebuggerXCallEnter` 出现在 panic 的调试器收核阶段，
+不能单独当作最初的 CPU_ON 失败。日志确认内核已返回 loader，
+但未提供其余核逐项 OFF 的独立观测。本轮仅取证和源码/符号核对，
+没有源码修复、新构建、新 QEMU 或由助手执行设备启动/上传/重启。
+
+用户随后确认已试过双核且正常；这是用户实机反馈，未独立取得该轮日志或核对
+所用镜像哈希。继续核对本轮八核的源码和实际未剥离内核，发现明确的锁约定缺陷：
+`sched_steal_thread_enabled` 在同一 node 有多个 pset 时返回 true；
+`sched_clutch_steal_thread` 却是仅返回 NULL 的单簇占位实现，没有释放 pset 锁。
+`thread_select` 要求此回调返回时已解锁，并会再次调用 `pset_lock`。
+八核双簇注册触发该分支，双核单簇不触发，因而无需等第二簇 CPU_ON
+就可能 panic。实际内核该回调只有 `mov x0, #0; ret`，
+回溯地址 `thread_select+0x920` 的前一条指令正是 `lck_ticket_lock`。
+该缺陷与本轮重复持有 `pset0` 的 panic 及双核对照吻合；
+下一轮应先修复该回调的锁约定，不将 `delay_for_interval` 本身当作已确认根因，
+也不以添加大小核标签替代此修复。尚未修改 overlay 或生成修复候选，
+修复后的八核运行仍待独立验证。
+
+### 双簇空回调解锁修复
+
+`apply_chiron_smp.py` 现对真实 `sched_clutch_steal_thread` 添加仅限 CHIRON_SMP
+的 `pset_unlock(pset)`，满足 `thread_select` 的返回约定。未改启动等待、
+CPU 类型、PSCI、GIC、ABI 或严格收核门禁，也未引入跨簇取任务算法。
+定向回归提取真实原版/补丁回调执行：原版双簇检测到锁未释放，
+补丁 SMP 版本允许调用者重新加锁；单簇不调用回调，非 SMP 保持原实现。
+完整内核编译及修复候选待云端结果；本地轻量检查、交付和硬件结果随后补记。

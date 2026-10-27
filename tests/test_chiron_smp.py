@@ -212,7 +212,7 @@ int main(void) {
 
 
 class HostTests(unittest.TestCase):
-    def compile_and_run(self, text, flags=()):
+    def compile_and_run(self, text, flags=(), expected_returncode=0):
         compiler = shutil.which("cc")
         if not compiler:
             self.skipTest("host C compiler unavailable")
@@ -226,7 +226,7 @@ class HostTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             result = subprocess.run([str(program)], capture_output=True, text=True)
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(result.returncode, expected_returncode, result.stdout + result.stderr)
 
     def test_actual_loader_admission_for_all_build_limits(self):
         include = (OVERLAYS / "chiron_smp_loader.inc").read_text()
@@ -348,6 +348,7 @@ class FixedSourceTests(unittest.TestCase):
             "pexpert/pexpert/arm64/BCM2837.h", "pexpert/pexpert/arm64/board_config.h",
             "osfmk/arm64/machine_routines.c", "osfmk/arm64/psci_smp.c",
             "osfmk/arm64/gic_v3_irq.c", "osfmk/arm64/start.s", "makedefs/MakeInc.def",
+            "osfmk/kern/sched_clutch.c",
         )
         for relative in paths:
             destination = root / relative
@@ -390,6 +391,49 @@ int main(void) { return 0; }
 """
             for flags in ([], ["-DCHIRON_PORT=1"]):
                 self.compile_board(root, text, flags)
+
+    def test_clutch_multicluster_idle_releases_pset_before_caller_relocks(self):
+        with tempfile.TemporaryDirectory(prefix="chiron-smp-clutch-") as directory:
+            root = Path(directory)
+            self.copy_kernel_inputs(root)
+            original = (root / "osfmk/kern/sched_clutch.c").read_text()
+            smp.kernel_overlay(root)
+            patched = (root / "osfmk/kern/sched_clutch.c").read_text()
+            def callback(text):
+                begin = text.index("static thread_t\nsched_clutch_steal_thread(__unused")
+                return text[begin:text.index("\n}\n", begin) + 3]
+            host = r"""
+#include <assert.h>
+#include <stddef.h>
+#ifndef __unused
+#define __unused __attribute__((unused))
+#endif
+#define THREAD_NULL NULL
+typedef void *thread_t;
+typedef struct pset { unsigned map; int locked; } *processor_set_t;
+static void __unused pset_unlock(processor_set_t pset) {
+    assert(pset->locked); pset->locked = 0;
+}
+"""
+            main = r"""
+int main(void) {
+    for (unsigned map = 1; map <= 3; map += 2) {
+        struct pset data = { map, 1 };
+        processor_set_t pset = &data;
+        if ((pset->map & (pset->map - 1)) != 0) {
+            assert(sched_clutch_steal_thread(pset) == THREAD_NULL);
+            if (pset->locked) return 42; /* caller would recursively lock its pset */
+            pset->locked = 1;
+        }
+        assert(pset->locked);
+        pset_unlock(pset);
+    }
+    return 0;
+}
+"""
+            self.compile_and_run(host + callback(original) + main, expected_returncode=42)
+            self.compile_and_run(host + callback(patched) + main, expected_returncode=42)
+            self.compile_and_run(host + callback(patched) + main, ["-DCHIRON_SMP=1"])
 
     def test_strict_touch_return_never_resumes_firmware_without_off_confirmation(self):
         with tempfile.TemporaryDirectory(prefix="chiron-touch-smp-return-") as directory:

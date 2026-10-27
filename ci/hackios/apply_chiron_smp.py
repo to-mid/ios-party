@@ -218,6 +218,20 @@ def kernel_overlay(xnu_tree: Path, strict_firmware_return=False) -> dict:
         "#endif\n",
     )
     edits[gic] = text
+    clutch = "osfmk/kern/sched_clutch.c"
+    text = (xnu_tree / clutch).read_text()
+    text = replace_once(
+        text,
+        "\t/* Thread stealing is not enabled for single cluster clutch scheduler platforms */\n"
+        "\treturn THREAD_NULL;",
+        "#if defined(CHIRON_SMP)\n"
+        "\t/* thread_select expects the pset lock dropped even when no thread is stolen. */\n"
+        "\tpset_unlock(pset);\n"
+        "#endif\n"
+        "\t/* Thread stealing is not enabled for single cluster clutch scheduler platforms */\n"
+        "\treturn THREAD_NULL;",
+    )
+    edits[clutch] = text
     edits["osfmk/arm64/chiron_smp_kernel.inc"] = (HERE / "chiron_smp_kernel.inc").read_text()
     return {"schema": "chiron-smp-overlay-v1", "kind": "kernel", "cpu_limit": 8,
             "strict_firmware_return": strict_firmware_return,
