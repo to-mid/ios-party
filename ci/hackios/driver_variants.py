@@ -12,6 +12,7 @@ from pathlib import Path
 VARIANTS = {
     "baseline": {"cpu_count": 1, "touch": False},
     "touch": {"cpu_count": 1, "touch": True},
+    "touch-smp2": {"cpu_count": 2, "touch": True},
     "smp2": {"cpu_count": 2, "touch": False},
     "smp4": {"cpu_count": 4, "touch": False},
     "smp8": {"cpu_count": 8, "touch": False},
@@ -56,7 +57,8 @@ def overlay(kind, source, variant=None):
         if kind == "loader":
             changes["smp"] = module.loader_overlay(source, chosen["cpu_count"])
         else:
-            changes["smp"] = module.kernel_overlay(source)
+            changes["smp"] = (module.kernel_overlay(source, strict_firmware_return=True)
+                              if chosen["touch"] else module.kernel_overlay(source))
     if chosen["touch"]:
         module = importlib.import_module("apply_chiron_touch")
         function = getattr(module, f"{kind}_overlay", None)

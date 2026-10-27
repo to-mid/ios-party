@@ -11,7 +11,7 @@ on:
         type: choice
         required: true
         default: all
-        options: [all, smp, touch]
+        options: [all, smp, touch, touch-smp2]
 
 permissions:
   contents: read
@@ -24,7 +24,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: ${{ fromJSON(github.event_name == 'push' && '["smp2","smp8"]' || inputs.variants == 'smp' && '["smp2","smp8"]' || inputs.variants == 'touch' && '["touch"]' || '["touch","smp2","smp8"]') }}
+        variant: ${{ fromJSON(github.event_name == 'push' && '["smp2","smp8"]' || inputs.variants == 'smp' && '["smp2","smp8"]' || inputs.variants == 'touch-smp2' && '["touch-smp2"]' || inputs.variants == 'touch' && '["touch"]' || '["touch","smp2","smp8"]') }}
     env:
       PORT_WORK: ${{ github.workspace }}/.cache/chiron-drivers
       PORT_EVIDENCE: ${{ github.workspace }}/dist/chiron-drivers

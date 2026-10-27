@@ -35,6 +35,45 @@ def input_qos_source(original):
         '\t    input_set, input_get, (unsigned)input_qos, input_relative);\n', 1).encode()
 
 
+def reuse_qos_root(artifact, output):
+    """Extract the exact single-core milestone's unchanged userland for SMP tests."""
+    import struct
+    from driver_phone import payload_entries
+    sys.path.insert(0, str(HERE.parents[1] / "tools"))
+    from chiron_ram_fat import RamFat32
+
+    artifact, output = Path(artifact), Path(output)
+    folder = artifact / "driver-image"
+    manifest = json.loads((folder / "manifest.json").read_text())
+    name = manifest["image"]
+    if Path(name).name != name:
+        raise ValueError("invalid milestone image name")
+    data = (folder / name).read_bytes()
+    expected = "c0331e82067f55336e7b43dd12f5ad83882edc03942dc912d86c6f02dd8c9dad"
+    if (digest(data) != expected or manifest["sha256"] != expected
+            or len(data) != manifest["bytes"] or data[:8] != b"ANDROID!"
+            or manifest["physical_transport_bytes"] != 24 << 20
+            or manifest["logical_transport_bytes"] != 48 << 20):
+        raise ValueError("known working QoS milestone image differs")
+    page = struct.unpack_from("<I", data, 36)[0]
+    size = struct.unpack_from("<I", data, 8)[0]
+    offset = page + ((size + page - 1) // page) * page
+    fat = RamFat32(data[offset:offset + (24 << 20)] + bytes(24 << 20))
+    payload = fat.read("EFI/HackiOS/payload.bin")
+    if digest(payload) != manifest["phone_inputs"]["payload"]["sha256"]:
+        raise ValueError("milestone payload differs")
+    root = payload_entries(payload)["ramdisk"]
+    proof = manifest["qualification"]["home_wake"]
+    if (proof.get("input_qos") is not True or proof.get("synthetic") is not False
+            or proof["root"]["sha256"] != digest(root) or proof["root"]["bytes"] != len(root)):
+        raise ValueError("milestone QoS root differs")
+    output.mkdir(parents=True, exist_ok=False)
+    (output / "root.apfs").write_bytes(root)
+    proof = dict(proof, reused_from_image_sha256=expected, reused_from_build="40327776076")
+    (output / "home-wake.json").write_text(json.dumps(proof, indent=2) + "\n")
+    return proof
+
+
 def replay_source(original):
     """Keep upstream gesture timing; release a posted finger on ordinary error exit."""
     if digest(original) != UPSTREAM_RWT:
@@ -253,11 +292,18 @@ def main():
     qos.add_argument("--baseline", type=Path, required=True)
     qos.add_argument("--work", type=Path, required=True)
     qos.add_argument("--output", type=Path, required=True)
+    reuse = sub.add_parser("reuse-qos")
+    reuse.add_argument("--artifact", type=Path, required=True)
+    reuse.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.mode == "source":
         args.output.write_bytes(replay_source(args.upstream.read_bytes()))
     elif args.mode == "install":
         print(json.dumps(install(args.root, args.binary), indent=2))
+    elif args.mode == "reuse-qos":
+        import cloud
+        cloud.require_runner()
+        print(json.dumps(reuse_qos_root(args.artifact, args.output), indent=2))
     elif args.mode == "wake":
         import cloud
         cloud.require_runner()

@@ -29,7 +29,7 @@ class VariantTests(unittest.TestCase):
                 variants.selection(name)
         for variable in ("HACKIOS_REUSE_KERNEL_DIR", "HACKIOS_CHIRON_KERNEL_DIR"):
             with patch.dict(os.environ, {variable: "/old-kernel"}):
-                for variant in ("touch", "smp2", "smp4", "smp8"):
+                for variant in ("touch", "touch-smp2", "smp2", "smp4", "smp8"):
                     with self.subTest(variable=variable, variant=variant):
                         with self.assertRaisesRegex(ValueError, "fresh source kernel"):
                             variants.overlay("kernel", Path("/unused"), variant)
@@ -55,9 +55,31 @@ class VariantTests(unittest.TestCase):
 
     def test_single_core_runtime_qualification_rejects_each_experiment(self):
         variants.require_baseline_runtime("baseline")
-        for variant in ("touch", "smp2", "smp4", "smp8"):
+        for variant in ("touch", "touch-smp2", "smp2", "smp4", "smp8"):
             with self.assertRaisesRegex(ValueError, "single-core"):
                 variants.require_baseline_runtime(variant)
+
+    def test_combined_touch_smp_keeps_both_overlays_and_strict_firmware_return(self):
+        source = Path("/source")
+        called = []
+        smp = types.SimpleNamespace(
+            loader_overlay=lambda path, count: called.append(("smp-loader", count)) or {},
+            kernel_overlay=lambda path, strict_firmware_return=False:
+                called.append(("smp-kernel", strict_firmware_return)) or {},
+        )
+        touch = types.SimpleNamespace(
+            loader_overlay=lambda path: called.append(("touch-loader",)) or {},
+            kernel_overlay=lambda path: called.append(("touch-kernel",)) or {},
+        )
+        with patch.dict(sys.modules, {"apply_chiron_smp": smp, "apply_chiron_touch": touch}):
+            report = variants.overlay("kernel", source, "touch-smp2")
+            loader = variants.overlay("loader", source, "touch-smp2")
+        self.assertEqual(called, [("smp-kernel", True), ("touch-kernel",),
+                                  ("smp-loader", 2), ("touch-loader",)])
+        self.assertEqual(report["cpu_count"], 2)
+        self.assertEqual(set(report["changes"]), {"smp", "touch"})
+        self.assertEqual(set(loader["changes"]), {"smp", "touch"})
+        self.assertFalse(report["runtime_qualified"])
 
     def test_legacy_pipeline_refuses_experiments_before_images_or_guest_execution(self):
         pipeline = importlib.import_module("chiron")

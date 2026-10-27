@@ -19,6 +19,29 @@ UPSTREAM = Path("/private/tmp/chiron-hackios-reuse/userland/userland/src")
 
 
 class ReplayTests(unittest.TestCase):
+    def test_reuse_verified_qos_image_extracts_only_unchanged_userland(self):
+        sys.path.insert(0, str(hid.HERE))
+        artifact = ROOT / "dist/chiron-touch-input-qos-40327776076"
+        if not (artifact / "driver-image/manifest.json").is_file():
+            self.skipTest("verified milestone artifact unavailable")
+        with tempfile.TemporaryDirectory(prefix="chiron-qos-reuse-") as folder:
+            out = Path(folder) / "root"
+            proof = hid.reuse_qos_root(artifact, out)
+            self.assertEqual(set(p.name for p in out.iterdir()), {"root.apfs", "home-wake.json"})
+            self.assertEqual(hid.digest((out / "root.apfs").read_bytes()), proof["root"]["sha256"])
+            self.assertTrue(proof["input_qos"])
+            self.assertFalse(proof["synthetic"])
+            self.assertFalse(proof["hardware_observed"])
+            self.assertEqual(proof["reused_from_build"], "40327776076")
+        with tempfile.TemporaryDirectory(prefix="chiron-qos-wrong-") as folder:
+            p = Path(folder) / "driver-image"
+            p.mkdir()
+            (p / "manifest.json").write_text(
+                '{"image":"wrong.img","sha256":"0","bytes":5}')
+            (p / "wrong.img").write_bytes(b"other")
+            with self.assertRaises(ValueError):
+                hid.reuse_qos_root(Path(folder), Path(folder) / "output")
+
     def test_input_qos_fragment_requests_interactive_and_reports_failure_without_stopping(self):
         if not (UPSTREAM / "inject.c").is_file() or not shutil.which("cc"):
             self.skipTest("pinned input source or host compiler unavailable")

@@ -316,6 +316,31 @@ class FixedSourceTests(unittest.TestCase):
                         with self.assertRaises(ValueError):
                             smp.loader_overlay(root, count)
 
+    def test_two_core_loader_composes_touch_reset_without_relaxing_off_preflight(self):
+        if not self.compiler:
+            self.skipTest("ARM64 clang unavailable")
+        import apply_chiron_touch
+        with tempfile.TemporaryDirectory(prefix="chiron-touch-smp2-loader-") as directory:
+            root = Path(directory)
+            target = self.loader_tree(root, True, True)
+            smp.loader_overlay(root, 2)
+            apply_chiron_touch.loader_overlay(root, reset_prepare=True)
+            text = (target / "loader.c").read_text()
+            self.assertIn(".cores = 2", text)
+            self.assertLess(text.index("chiron_smp_prepare(pi.cmdline,"),
+                            text.index("chiron_touch_loader_owner(ba->commandLine,"))
+            owner = (target / "chiron_touch_loader.inc").read_text()
+            self.assertIn("state != 1", owner)
+            self.assertIn("affinities[7]", owner)
+            result = subprocess.run([
+                self.compiler, "--target=aarch64-unknown-windows", "-ffreestanding",
+                "-fno-builtin", "-fno-stack-protector", "-fshort-wchar",
+                "-mgeneral-regs-only", "-O1", "-Wall", "-Wextra",
+                "-Wno-unused-parameter", "-Wno-unused-function", "-Werror", "-c",
+                str(target / "loader.c"), "-o", str(root / "loader.obj"),
+            ], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def copy_kernel_inputs(self, root):
         if not (self.xnu_root / "osfmk/arm64/psci_smp.c").is_file():
             self.skipTest("fully applied XNU source unavailable")
@@ -365,6 +390,47 @@ int main(void) { return 0; }
 """
             for flags in ([], ["-DCHIRON_PORT=1"]):
                 self.compile_board(root, text, flags)
+
+    def test_strict_touch_return_never_resumes_firmware_without_off_confirmation(self):
+        with tempfile.TemporaryDirectory(prefix="chiron-touch-smp-return-") as directory:
+            root = Path(directory)
+            self.copy_kernel_inputs(root)
+            report = smp.kernel_overlay(root, strict_firmware_return=True)
+            self.assertTrue(report["strict_firmware_return"])
+            text = (root / "osfmk/arm64/psci_smp.c").read_text()
+            self.assertNotIn("state == PSCI_AFFINITY_OFF || state < 0", text)
+            begin = text.index("\t\tif (psci_call(PSCI_AFFINITY_INFO, cdp->cpu_phys_id, 0, 0) != PSCI_AFFINITY_OFF)")
+            end = text.index("\n\t}\n}", begin)
+            gate = text[begin:end]
+            self.compile_and_run(r"""
+#include <assert.h>
+#include <setjmp.h>
+#define PSCI_AFFINITY_INFO 4
+#define PSCI_AFFINITY_OFF 1
+static int state, notes, resumed;
+static jmp_buf parked;
+static int psci_call(int fn,int id,int a,int b) {
+    assert(fn==4 && id==1 && !a && !b); return state;
+}
+static void psci_smp_note(const char *s,int cpu) { (void)s; assert(cpu==1); notes++; }
+#define __builtin_arm_wfi() longjmp(parked,1)
+static void returning(void) {
+    struct {int cpu_phys_id;} data={1},*cdp=&data;
+    int cpu=1;
+""" + gate + r"""
+    resumed++;
+}
+int main(void) {
+    state=1; returning(); assert(resumed==1 && !notes);
+    const int rejected[]={0,2,-1,-2};
+    for(unsigned i=0;i<4;i++) {
+        state=rejected[i];
+        if(!setjmp(parked)) {returning(); assert(0);}
+        assert(resumed==1 && notes==(int)i+1);
+    }
+    return 0;
+}
+""")
 
     def compile_board(self, root, text, flags):
         compiler = shutil.which("cc")

@@ -54,11 +54,15 @@ def payload_entries(data):
 def check_kernel(data, variant="smp2"):
     if len(data) < 32 or struct.unpack_from("<III", data) != (0xFEEDFACF, 0x100000C, 0):
         raise ValueError("experimental kernel is not plain ARM64 Mach-O")
-    if variant == "touch":
+    chosen = selection(variant)
+    if chosen["touch"]:
         if b"chiron touch:" not in data:
             raise ValueError("experimental kernel lacks the touch implementation")
-    elif ABI not in data:
+    if chosen["cpu_count"] > 1 and ABI not in data:
         raise ValueError("experimental kernel lacks the SMP ABI")
+    if (chosen["touch"] and chosen["cpu_count"] > 1
+            and b"OFF unconfirmed: refusing return to resident firmware" not in data):
+        raise ValueError("combined kernel lacks strict firmware return")
 
 
 def admit_qualification(proof, inputs, payload, source_experiment=False):
@@ -71,7 +75,7 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
     if proof.get("schema") != SCHEMA or inputs.get("driver_experiment") != proof:
         raise ValueError("experimental proof differs from phone inputs")
     chosen = selection(proof.get("variant", ""))
-    if chosen["variant"] not in ("smp2", "smp8", "touch") or proof.get("cpu_count") != chosen["cpu_count"]:
+    if chosen["variant"] not in ("smp2", "smp8", "touch", "touch-smp2") or proof.get("cpu_count") != chosen["cpu_count"]:
         raise ValueError("unsupported phone experiment")
     desktop = proof.get("touch_desktop", False)
     if type(desktop) is not bool or (desktop and
@@ -135,6 +139,11 @@ def admit_qualification(proof, inputs, payload, source_experiment=False):
                 raise ValueError("source experiment must retain unqualified status")
     if source.get("kernel_reused") is not False:
         raise ValueError("the experimental source kernel was reused")
+    if chosen["touch"] and chosen["cpu_count"] > 1:
+        smp = source.get("overlays", {}).get("kernel", {}).get("changes", {}).get("smp", {})
+        if (smp.get("strict_firmware_return") is not True
+                or proof.get("loader_overlay", {}).get("smp", {}).get("cpu_limit") != chosen["cpu_count"]):
+            raise ValueError("combined touch/SMP requires strict firmware return and matching loader")
     if chosen["touch"]:
         touch = source.get("overlays", {}).get("kernel", {}).get("changes", {}).get("touch", {})
         active = proof.get("touch_active", False)
@@ -285,7 +294,7 @@ def verify_source(folder, variant, source_run, clock_prepare=False, pinmux_prepa
     proof = json.loads((folder / "driver-build.json").read_text())
     chosen = selection(variant)
     if (proof.get("schema") != "chiron-driver-build-v1"
-            or variant not in ("smp2", "smp8", "touch") or proof.get("variant") != variant):
+            or variant not in ("smp2", "smp8", "touch", "touch-smp2") or proof.get("variant") != variant):
         raise ValueError("wrong source artifact variant")
     if proof.get("source_build_run") != source_run or proof.get("cpu_count") != chosen["cpu_count"]:
         raise ValueError("wrong source build run or CPU count")
@@ -308,6 +317,10 @@ def verify_source(folder, variant, source_run, clock_prepare=False, pinmux_prepa
     if (folder / "kernel-undefined.txt").read_text().strip():
         raise ValueError("source kernel has unresolved symbols")
     check_kernel((folder / "kernel.development.hackios").read_bytes(), variant)
+    if chosen["touch"] and chosen["cpu_count"] > 1:
+        if proof.get("overlays", {}).get("kernel", {}).get("changes", {}).get(
+                "smp", {}).get("strict_firmware_return") is not True:
+            raise ValueError("combined touch/SMP source lacks strict firmware return")
     if chosen["touch"]:
         report = proof.get("overlays", {}).get("kernel", {}).get("changes", {}).get("touch", {})
         if report.get("board_probe_implemented") is not True:
@@ -337,7 +350,7 @@ def main():
     parser.add_argument("--runtime", type=Path, required=True)
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--variant", choices=("smp2", "smp8", "touch"), required=True)
+    parser.add_argument("--variant", choices=("smp2", "smp8", "touch", "touch-smp2"), required=True)
     parser.add_argument("--clock-prepare", action="store_true")
     parser.add_argument("--pinmux-prepare", action="store_true")
     parser.add_argument("--reset-prepare", action="store_true")
@@ -363,7 +376,7 @@ def main():
     if args.touch_input_qos and not args.touch_home_wake_root:
         parser.error("--touch-input-qos requires --touch-home-wake-root")
     if args.touch_home_wake_root and (
-            args.variant != "touch" or not args.touch_capture or args.touch_hid_replay_root):
+            args.variant not in ("touch", "touch-smp2") or not args.touch_capture or args.touch_hid_replay_root):
         parser.error("HOME wake root requires explicit physical --touch-capture")
     if args.touch_hid_replay_root and (
             args.variant != "touch" or any((args.touch_active, args.touch_capture,
@@ -375,7 +388,7 @@ def main():
     if args.touch_desktop or args.touch_capture:
         args.touch_active = True
     if args.touch_active:
-        if args.variant != "touch" or args.l6_prepare or args.l6_abi or args.l6_capture:
+        if args.variant not in ("touch", "touch-smp2") or args.l6_prepare or args.l6_abi or args.l6_capture:
             parser.error("--touch-active requires touch and retained power without L6 experiments")
         args.reset_prepare = True
     if args.l6_capture:
@@ -389,7 +402,7 @@ def main():
         args.pinmux_prepare = True
     if args.pinmux_prepare:
         args.clock_prepare = True
-    if args.clock_prepare and args.variant != "touch":
+    if args.clock_prepare and args.variant not in ("touch", "touch-smp2"):
         parser.error("clock/pinmux preparation requires the touch variant")
     source = verify_source(args.source_build, args.variant, args.source_run,
                            args.clock_prepare, args.pinmux_prepare, args.touch_active, args.touch_capture)
@@ -420,9 +433,12 @@ def main():
                    "--phone", args.output])
     if chosen["touch"]:
         import apply_chiron_touch
-        overlay = {"cpu_limit": 1, "touch": apply_chiron_touch.loader_overlay(
+        overlay = {"cpu_limit": chosen["cpu_count"]}
+        if chosen["cpu_count"] > 1:
+            overlay["smp"] = apply_chiron_smp.loader_overlay(args.work, chosen["cpu_count"])
+        overlay["touch"] = apply_chiron_touch.loader_overlay(
             args.work, reset_prepare=args.reset_prepare, l6_prepare=args.l6_prepare,
-            l6_abi=args.l6_abi, l6_capture=args.l6_capture)}
+            l6_abi=args.l6_abi, l6_capture=args.l6_capture)
     else:
         overlay = apply_chiron_smp.loader_overlay(args.work, chosen["cpu_count"])
     cloud.command(["bash", "xnuloader/build.sh"], cwd=args.work)

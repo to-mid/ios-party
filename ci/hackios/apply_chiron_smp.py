@@ -113,7 +113,7 @@ def loader_overlay(source_repo: Path, cpu_count: int) -> dict:
             "result": result}
 
 
-def kernel_overlay(xnu_tree: Path) -> dict:
+def kernel_overlay(xnu_tree: Path, strict_firmware_return=False) -> dict:
     xnu_tree = Path(xnu_tree)
     board = "pexpert/pexpert/arm64/BCM2837.h"
     config = "pexpert/pexpert/arm64/board_config.h"
@@ -182,6 +182,18 @@ def kernel_overlay(xnu_tree: Path) -> dict:
         '\tif (chiron_smp_expected_cpus) panic("chiron smp: cpu %d failed to join scheduler (stage %u)", cpu, stage);\n'
         "#endif\n\treturn KERN_FAILURE;\n}\n\n/*",
     )
+    if strict_firmware_return:
+        text = replace_once(
+            text, "if (state == PSCI_AFFINITY_OFF || state < 0) {",
+            "if (state == PSCI_AFFINITY_OFF) {")
+        text = replace_once(
+            text,
+            "\t\tif (os_atomic_load(&psci_smp_cpu_stage[cpu], acquire) != PSCI_SMP_CPU_OFF &&\n"
+            "\t\t    psci_call(PSCI_AFFINITY_INFO, cdp->cpu_phys_id, 0, 0) != PSCI_AFFINITY_OFF) {\n"
+            '\t\t\tpsci_smp_note(" did not stop: it is left running\\n", cpu);\n\t\t}',
+            "\t\tif (psci_call(PSCI_AFFINITY_INFO, cdp->cpu_phys_id, 0, 0) != PSCI_AFFINITY_OFF) {\n"
+            '\t\t\tpsci_smp_note(" OFF unconfirmed: refusing return to resident firmware\\n", cpu);\n'
+            "\t\t\tfor (;;) __builtin_arm_wfi();\n\t\t}")
     edits[psci] = text
     text = (xnu_tree / gic).read_text()
     if "virtual-timer-intid" not in text:
@@ -208,6 +220,7 @@ def kernel_overlay(xnu_tree: Path) -> dict:
     edits[gic] = text
     edits["osfmk/arm64/chiron_smp_kernel.inc"] = (HERE / "chiron_smp_kernel.inc").read_text()
     return {"schema": "chiron-smp-overlay-v1", "kind": "kernel", "cpu_limit": 8,
+            "strict_firmware_return": strict_firmware_return,
             "count_source": "/chosen/chiron-smp-cpu-count", "mpidrs": list(MPIDRS),
             "kernel_rebuild_required": True, "hardware_observed": False,
             "result": _publish(xnu_tree, edits)}
