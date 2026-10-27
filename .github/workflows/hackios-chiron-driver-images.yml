@@ -8,7 +8,7 @@ on:
         type: choice
         required: true
         default: smp
-        options: [smp, touch-probe, touch-clock-probe, touch-pinmux-probe, touch-reset-probe, touch-l6-probe, touch-l6-trace, touch-l6-abi, touch-l6-capture, touch-active, touch-desktop, touch-capture, touch-hid-replay, touch-capture-wake, touch-input-qos, touch-smp2-qos]
+        options: [smp, touch-probe, touch-clock-probe, touch-pinmux-probe, touch-reset-probe, touch-l6-probe, touch-l6-trace, touch-l6-abi, touch-l6-capture, touch-active, touch-desktop, touch-capture, touch-hid-replay, touch-capture-wake, touch-input-qos, touch-smp2-qos, touch-smp8-qos]
       touch_source_run:
         description: Successful touch source build run for touch-probe
         type: string
@@ -20,31 +20,31 @@ permissions:
 
 jobs:
   image:
-    name: Experimental ${{ inputs.variant == 'touch-smp2-qos' && 'TOUCH-SMP2-QOS' || inputs.variant == 'touch-input-qos' && 'TOUCH-INPUT-QOS' || inputs.variant == 'touch-capture-wake' && 'TOUCH-CAPTURE-WAKE' || inputs.variant == 'touch-hid-replay' && 'TOUCH-HID-REPLAY' || inputs.variant == 'touch-capture' && 'TOUCH-CAPTURE' || inputs.variant == 'touch-desktop' && 'TOUCH-DESKTOP' || inputs.variant == 'touch-active' && 'TOUCH-ACTIVE' || inputs.variant == 'touch-l6-abi' && 'TOUCH-L6-ABI' || inputs.variant == 'touch-l6-trace' && 'TOUCH-L6-TRACE' || inputs.variant == 'touch-l6-probe' && 'TOUCH-L6-PROBE' || inputs.variant == 'touch-reset-probe' && 'TOUCH-RESET-PROBE' || inputs.variant == 'touch-pinmux-probe' && 'TOUCH-PINMUX-PROBE' || inputs.variant == 'touch-clock-probe' && 'TOUCH-CLOCK-PROBE' || inputs.variant == 'touch-probe' && 'TOUCH-PROBE' || format('SMP{0}', matrix.cpu_count) }}
+    name: Experimental ${{ startsWith(inputs.variant, 'touch-smp') && format('TOUCH-SMP{0}-QOS', matrix.cpu_count) || inputs.variant == 'touch-input-qos' && 'TOUCH-INPUT-QOS' || inputs.variant == 'touch-capture-wake' && 'TOUCH-CAPTURE-WAKE' || inputs.variant == 'touch-hid-replay' && 'TOUCH-HID-REPLAY' || inputs.variant == 'touch-capture' && 'TOUCH-CAPTURE' || inputs.variant == 'touch-desktop' && 'TOUCH-DESKTOP' || inputs.variant == 'touch-active' && 'TOUCH-ACTIVE' || inputs.variant == 'touch-l6-abi' && 'TOUCH-L6-ABI' || inputs.variant == 'touch-l6-trace' && 'TOUCH-L6-TRACE' || inputs.variant == 'touch-l6-probe' && 'TOUCH-L6-PROBE' || inputs.variant == 'touch-reset-probe' && 'TOUCH-RESET-PROBE' || inputs.variant == 'touch-pinmux-probe' && 'TOUCH-PINMUX-PROBE' || inputs.variant == 'touch-clock-probe' && 'TOUCH-CLOCK-PROBE' || inputs.variant == 'touch-probe' && 'TOUCH-PROBE' || format('SMP{0}', matrix.cpu_count) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
-        cpu_count: ${{ fromJSON(inputs.variant == 'touch-smp2-qos' && '[2]' || startsWith(inputs.variant, 'touch-') && '[1]' || '[2,8]') }}
+        cpu_count: ${{ fromJSON(inputs.variant == 'touch-smp8-qos' && '[8]' || inputs.variant == 'touch-smp2-qos' && '[2]' || startsWith(inputs.variant, 'touch-') && '[1]' || '[2,8]') }}
     env:
       GH_TOKEN: ${{ github.token }}
       PYTHONDONTWRITEBYTECODE: '1'
-      DRIVER_VARIANT: ${{ inputs.variant == 'touch-smp2-qos' && 'touch-smp2' || startsWith(inputs.variant, 'touch-') && 'touch' || format('smp{0}', matrix.cpu_count) }}
+      DRIVER_VARIANT: ${{ startsWith(inputs.variant, 'touch-smp') && format('touch-smp{0}', matrix.cpu_count) || startsWith(inputs.variant, 'touch-') && 'touch' || format('smp{0}', matrix.cpu_count) }}
       SOURCE_RUN: ${{ startsWith(inputs.variant, 'touch-') && inputs.touch_source_run || '39964860075' }}
-      IMAGE_LABEL: ${{ inputs.variant == 'touch-smp2-qos' && 'TOUCH-SMP2-QOS' || inputs.variant == 'touch-input-qos' && 'TOUCH-INPUT-QOS' || inputs.variant == 'touch-capture-wake' && 'TOUCH-CAPTURE-WAKE' || inputs.variant == 'touch-hid-replay' && 'TOUCH-HID-REPLAY' || inputs.variant == 'touch-capture' && 'TOUCH-CAPTURE' || inputs.variant == 'touch-desktop' && 'TOUCH-DESKTOP' || inputs.variant == 'touch-active' && 'TOUCH-ACTIVE' || inputs.variant == 'touch-l6-capture' && 'TOUCH-L6-CAPTURE' || inputs.variant == 'touch-l6-abi' && 'TOUCH-L6-ABI' || inputs.variant == 'touch-l6-trace' && 'TOUCH-L6-TRACE' || inputs.variant == 'touch-l6-probe' && 'TOUCH-L6-PROBE' || inputs.variant == 'touch-reset-probe' && 'TOUCH-RESET-PROBE' || inputs.variant == 'touch-pinmux-probe' && 'TOUCH-PINMUX-PROBE' || inputs.variant == 'touch-clock-probe' && 'TOUCH-CLOCK-PROBE' || inputs.variant == 'touch-probe' && 'TOUCH-PROBE' || format('SMP{0}', matrix.cpu_count) }}
+      IMAGE_LABEL: ${{ startsWith(inputs.variant, 'touch-smp') && format('TOUCH-SMP{0}-QOS', matrix.cpu_count) || inputs.variant == 'touch-input-qos' && 'TOUCH-INPUT-QOS' || inputs.variant == 'touch-capture-wake' && 'TOUCH-CAPTURE-WAKE' || inputs.variant == 'touch-hid-replay' && 'TOUCH-HID-REPLAY' || inputs.variant == 'touch-capture' && 'TOUCH-CAPTURE' || inputs.variant == 'touch-desktop' && 'TOUCH-DESKTOP' || inputs.variant == 'touch-active' && 'TOUCH-ACTIVE' || inputs.variant == 'touch-l6-capture' && 'TOUCH-L6-CAPTURE' || inputs.variant == 'touch-l6-abi' && 'TOUCH-L6-ABI' || inputs.variant == 'touch-l6-trace' && 'TOUCH-L6-TRACE' || inputs.variant == 'touch-l6-probe' && 'TOUCH-L6-PROBE' || inputs.variant == 'touch-reset-probe' && 'TOUCH-RESET-PROBE' || inputs.variant == 'touch-pinmux-probe' && 'TOUCH-PINMUX-PROBE' || inputs.variant == 'touch-clock-probe' && 'TOUCH-CLOCK-PROBE' || inputs.variant == 'touch-probe' && 'TOUCH-PROBE' || format('SMP{0}', matrix.cpu_count) }}
       CLOCK_PREPARE: ${{ inputs.variant == 'touch-clock-probe' && '1' || '0' }}
       PINMUX_PREPARE: ${{ inputs.variant == 'touch-pinmux-probe' && '1' || '0' }}
       RESET_PREPARE: ${{ inputs.variant == 'touch-reset-probe' && '1' || '0' }}
       L6_PREPARE: ${{ (inputs.variant == 'touch-l6-probe' || inputs.variant == 'touch-l6-trace') && '1' || '0' }}
       L6_ABI: ${{ inputs.variant == 'touch-l6-abi' && '1' || '0' }}
       L6_CAPTURE: ${{ inputs.variant == 'touch-l6-capture' && '1' || '0' }}
-      TOUCH_ACTIVE: ${{ (inputs.variant == 'touch-active' || inputs.variant == 'touch-desktop' || inputs.variant == 'touch-capture' || inputs.variant == 'touch-capture-wake' || inputs.variant == 'touch-input-qos' || inputs.variant == 'touch-smp2-qos') && '1' || '0' }}
+      TOUCH_ACTIVE: ${{ (inputs.variant == 'touch-active' || inputs.variant == 'touch-desktop' || inputs.variant == 'touch-capture' || inputs.variant == 'touch-capture-wake' || inputs.variant == 'touch-input-qos' || startsWith(inputs.variant, 'touch-smp')) && '1' || '0' }}
       TOUCH_DESKTOP: ${{ inputs.variant == 'touch-desktop' && '1' || '0' }}
-      TOUCH_CAPTURE: ${{ (inputs.variant == 'touch-capture' || inputs.variant == 'touch-capture-wake' || inputs.variant == 'touch-input-qos' || inputs.variant == 'touch-smp2-qos') && '1' || '0' }}
+      TOUCH_CAPTURE: ${{ (inputs.variant == 'touch-capture' || inputs.variant == 'touch-capture-wake' || inputs.variant == 'touch-input-qos' || startsWith(inputs.variant, 'touch-smp')) && '1' || '0' }}
       TOUCH_HID_REPLAY: ${{ inputs.variant == 'touch-hid-replay' && '1' || '0' }}
-      TOUCH_HOME_WAKE: ${{ (inputs.variant == 'touch-capture-wake' || inputs.variant == 'touch-input-qos' || inputs.variant == 'touch-smp2-qos') && '1' || '0' }}
-      TOUCH_INPUT_QOS: ${{ (inputs.variant == 'touch-input-qos' || inputs.variant == 'touch-smp2-qos') && '1' || '0' }}
+      TOUCH_HOME_WAKE: ${{ (inputs.variant == 'touch-capture-wake' || inputs.variant == 'touch-input-qos' || startsWith(inputs.variant, 'touch-smp')) && '1' || '0' }}
+      TOUCH_INPUT_QOS: ${{ (inputs.variant == 'touch-input-qos' || startsWith(inputs.variant, 'touch-smp')) && '1' || '0' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -99,7 +99,7 @@ jobs:
             --work "$RUNNER_TEMP/chiron-input-qos" \
             --output "$GITHUB_WORKSPACE/dist/chiron-home-wake"
       - name: Reuse the exact verified single-core QoS userland
-        if: inputs.variant == 'touch-smp2-qos'
+        if: startsWith(inputs.variant, 'touch-smp')
         run: |
           gh release download chiron-touch-20261026 --repo "$GITHUB_REPOSITORY" \
             --pattern MIX2-EXPERIMENTAL-TOUCH-INPUT-QOS.img --pattern manifest.json \

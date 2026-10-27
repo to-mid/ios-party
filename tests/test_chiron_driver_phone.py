@@ -136,35 +136,43 @@ def home_wake_fixture():
     return proof, inputs, payload
 
 
+def combined_fixture(count):
+    proof, inputs, payload = home_wake_fixture()
+    name = f"touch-smp{count}"
+    proof.update(variant=name, cpu_count=count)
+    proof["source_build"].update(variant=name, cpu_count=count)
+    proof["source_build"]["overlays"]["kernel"]["changes"]["smp"] = {
+        "strict_firmware_return": True}
+    proof["loader_overlay"].update(cpu_limit=count, smp={"cpu_limit": count})
+    inputs["profile"]["cpu_count"] = count
+    proof["command_line"] = proof["command_line"].replace("cpus=1", f"cpus={count}")
+    entries = phone.payload_entries(payload)
+    entries["kernel"] += b"OFF unconfirmed: refusing return to resident firmware"
+    proof["kernel"] = phone.content_digest(entries["kernel"])
+    proof["source_build"]["artifacts"]["kernel.development.hackios"] = proof["kernel"]
+    entries["cmdline"] = proof["command_line"].encode() + b"\0"
+    payload = pack(list(entries.items()))
+    inputs["payload"] = phone.content_digest(payload)
+    return proof, inputs, payload
+
+
 class ExperimentAdmissionTests(unittest.TestCase):
     def test_combined_touch_smp_requires_both_kernel_markers_and_strict_return(self):
-        proof, inputs, payload = home_wake_fixture()
-        proof.update(variant="touch-smp2", cpu_count=2)
-        proof["source_build"].update(variant="touch-smp2", cpu_count=2)
-        proof["source_build"]["overlays"]["kernel"]["changes"]["smp"] = {
-            "strict_firmware_return": True}
-        proof["loader_overlay"].update(cpu_limit=2, smp={"cpu_limit": 2})
-        inputs["profile"]["cpu_count"] = 2
-        proof["command_line"] = proof["command_line"].replace("cpus=1", "cpus=2")
-        entries = phone.payload_entries(payload)
-        entries["kernel"] += b"OFF unconfirmed: refusing return to resident firmware"
-        proof["kernel"] = phone.content_digest(entries["kernel"])
-        proof["source_build"]["artifacts"]["kernel.development.hackios"] = proof["kernel"]
-        entries["cmdline"] = proof["command_line"].encode() + b"\0"
-        payload = pack(list(entries.items()))
-        inputs["payload"] = phone.content_digest(payload)
-        phone.admit_qualification(proof, inputs, payload, True)
-        phone.check_kernel(entries["kernel"], "touch-smp2")
-        with self.assertRaises(ValueError):
-            phone.check_kernel(entries["kernel"].replace(phone.ABI, b""), "touch-smp2")
-        bad = copy.deepcopy(proof)
-        bad["source_build"]["overlays"]["kernel"]["changes"]["smp"]["strict_firmware_return"] = False
-        with self.assertRaises(ValueError):
-            phone.admit_qualification(bad, {**inputs, "driver_experiment": bad}, payload, True)
-        bad = copy.deepcopy(proof)
-        bad["loader_overlay"]["smp"]["cpu_limit"] = 1
-        with self.assertRaises(ValueError):
-            phone.admit_qualification(bad, {**inputs, "driver_experiment": bad}, payload, True)
+        for count in (2, 8):
+            proof, inputs, payload = combined_fixture(count)
+            kernel = phone.payload_entries(payload)["kernel"]
+            phone.admit_qualification(proof, inputs, payload, True)
+            phone.check_kernel(kernel, f"touch-smp{count}")
+            with self.assertRaises(ValueError):
+                phone.check_kernel(kernel.replace(phone.ABI, b""), f"touch-smp{count}")
+            bad = copy.deepcopy(proof)
+            bad["source_build"]["overlays"]["kernel"]["changes"]["smp"]["strict_firmware_return"] = False
+            with self.assertRaises(ValueError):
+                phone.admit_qualification(bad, {**inputs, "driver_experiment": bad}, payload, True)
+            bad = copy.deepcopy(proof)
+            bad["loader_overlay"]["smp"]["cpu_limit"] = 1
+            with self.assertRaises(ValueError):
+                phone.admit_qualification(bad, {**inputs, "driver_experiment": bad}, payload, True)
 
     def test_input_qos_requires_explicit_rebuilt_consumer_without_synthetic_touch(self):
         proof, inputs, payload = home_wake_fixture()
