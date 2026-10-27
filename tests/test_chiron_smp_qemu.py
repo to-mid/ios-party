@@ -8,10 +8,14 @@ from recheck_chiron_smp import loader_topology, observations
 
 class SmpQemuTests(unittest.TestCase):
     def test_two_cluster_loader_mapping_is_scoped_and_requires_exact_context(self):
-        original = "\t\t\t\tuint64_t mpidr = (uint64_t)core << plat->core_shift;"
+        original = ("\t\t\t\tuint64_t mpidr = (uint64_t)core << plat->core_shift;\n"
+                    "plat->gic_redist - plat->io_base, 0x100000 };\n"
+                    "\tif (more_cores) {\n\t\tfor (int distance")
         patched = loader_topology(original)
         self.assertIn("plat == &platform_qemu_virt", patched)
         self.assertIn("core / 4", patched)
+        self.assertIn("0x280000", patched)
+        self.assertIn("12 unused affinities confirmed OFF", patched)
         with self.assertRaises(ValueError):
             loader_topology("changed")
         with self.assertRaises(ValueError):

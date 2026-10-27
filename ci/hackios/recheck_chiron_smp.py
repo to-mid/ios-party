@@ -20,15 +20,32 @@ from driver_phone import admit_qualification, content_digest, payload_entries, v
 
 
 MPIDRS = [0, 1, 2, 3, 256, 257, 258, 259]
-MACHINE = "virt-2.6,gic-version=3"
+MACHINE = "virt,gic-version=3"
+QEMU_CPUS = 20
 
 
 def loader_topology(text):
-    return apply_chiron.replace_once(
+    text = apply_chiron.replace_once(
         text, "\t\t\t\tuint64_t mpidr = (uint64_t)core << plat->core_shift;",
         "\t\t\t\tuint64_t mpidr = (uint64_t)core << plat->core_shift;\n"
         "\t\t\t\tif (plat == &platform_qemu_virt)\n"
         "\t\t\t\t\tmpidr = ((uint64_t)(core / 4) << 8) | (core % 4);",
+    )
+    text = apply_chiron.replace_once(
+        text, "\tif (more_cores) {\n\t\tfor (int distance",
+        "\tif (more_cores) {\n"
+        "\t\tif (plat == &platform_qemu_virt) {\n"
+        "\t\t\tfor (int cpu = 4; cpu < 16; cpu++) {\n"
+        "\t\t\t\tif (psci_call(PSCI_AFFINITY_INFO, cpu, 0, 0) != 1) {\n"
+        '\t\t\t\t\tprint("qemu smp: unused affinity not OFF; refusing boot\\n");\n'
+        "\t\t\t\t\treturn 0;\n\t\t\t\t}\n\t\t\t}\n"
+        '\t\t\tprint("qemu smp: 12 unused affinities confirmed OFF\\n");\n'
+        "\t\t}\n\t\tfor (int distance",
+    )
+    return apply_chiron.replace_once(
+        text,
+        "plat->gic_redist - plat->io_base, 0x100000 };",
+        "plat->gic_redist - plat->io_base, (plat == &platform_qemu_virt ? 0x280000 : 0x100000) };",
     )
 
 
@@ -40,6 +57,7 @@ def observations(text):
         "clusters_registered": clusters,
         "all_secondary_cpus_online": online == list(range(1, 8)),
         "both_clusters_registered": clusters == [0, 1],
+        "unused_affinities_off": "qemu smp: 12 unused affinities confirmed OFF" in text,
         "eight_cpu_cache_init": "mcache: 8 CPU(s)" in text,
         "framebuffer_swaps": bool(re.search(r"MiniIOMobileFramebuffer: swap \d+", text)),
         "springboard_process": bool(re.search(
@@ -107,19 +125,18 @@ def main():
     (kernel / "userland/root.apfs").write_bytes(entries["ramdisk"])
     os.link(args.system, kernel / "userland/system.apfs")
     run = kernel / "qemu/run.sh"
-    text = apply_chiron.replace_once(run.read_text(), "-M virt,gic-version=3", "-M " + MACHINE)
-    run.write_text(apply_chiron.replace_once(text, "-cpu cortex-a76", "-cpu cortex-a53"))
+    run.write_text(apply_chiron.replace_once(run.read_text(), "-cpu cortex-a76", "-cpu cortex-a53"))
     ios = kernel / "qemu/run-ios.sh"
     text = apply_chiron.replace_once(ios.read_text(), "RD_ADDR=0xFC000000", "RD_ADDR=0x108000000")
     ios.write_text(apply_chiron.replace_once(text, '--rdres "$(printf', '--physbase 100000000 --rdres "$(printf'))
     dtb = args.evidence / "qemu-topology.dtb"
     cloud.command(["qemu-system-aarch64", "-M", MACHINE + ",dumpdtb=" + str(dtb),
-                   "-cpu", "cortex-a53", "-smp", "8", "-m", "7G", "-display", "none"],
+                   "-cpu", "cortex-a53", "-smp", str(QEMU_CPUS), "-m", "7G", "-display", "none"],
                   log=args.evidence / "qemu-topology.log")
     nodes = cloud.output(["fdtget", "-l", dtb, "/cpus"]).splitlines()
     affinities = sorted(int(cloud.output(["fdtget", "-t", "x", dtb, "/cpus/" + node, "reg"]), 16)
                         for node in nodes if node.startswith("cpu@"))
-    if affinities != MPIDRS:
+    if affinities != list(range(16)) + list(range(256, 260)):
         raise ValueError(f"QEMU did not instantiate the two-cluster affinities: {affinities}")
     cloud.save(args.evidence / "inputs.json", {
         "source_build_run": args.source_run, "source_commit": source["project_sha"],
@@ -127,7 +144,9 @@ def main():
         "small_root": content_digest(entries["ramdisk"]), "system": system_digest,
         "qemu_loader": cloud.digest(kernel / "xnuloader/loader.efi"),
         "qemu_loader_source": cloud.digest(loader), "machine": MACHINE,
-        "cpu_model": "cortex-a53", "mpidrs": affinities, "guest_seconds": args.seconds,
+        "cpu_model": "cortex-a53", "instantiated_vcpus": QEMU_CPUS,
+        "available_mpidrs": affinities, "selected_mpidrs": MPIDRS,
+        "guest_seconds": args.seconds,
         "physical_touch_enabled": False, "hardware_observed": False,
         "limits": "QEMU PSCI/GIC/firmware; not Kryo heterogeneous cores, QUP, or phone watchdog",
     })
@@ -135,7 +154,7 @@ def main():
     screens.mkdir()
     env = dict(os.environ, QEMU_EFI="/usr/share/AAVMF/AAVMF_CODE.fd",
                QEMU_VARS="/usr/share/AAVMF/AAVMF_VARS.fd", QEMU_RAM_GB="7",
-               QEMU_SMP="8", QEMU_INSTANCE="0", AUDIO="none",
+               QEMU_SMP=str(QEMU_CPUS), QEMU_INSTANCE="0", AUDIO="none",
                CMDLINE="cpus=8 chiron_touch=0")
     started = time.monotonic()
     actions = []
@@ -168,7 +187,8 @@ def main():
                 "hardware_observed": False, "physical_touch_qualified": False,
             }
             result["passed"] = all(seen[key] for key in (
-                "all_secondary_cpus_online", "both_clusters_registered", "eight_cpu_cache_init",
+                "all_secondary_cpus_online", "both_clusters_registered", "unused_affinities_off",
+                "eight_cpu_cache_init",
                 "framebuffer_swaps", "springboard_process", "backboardd_process",
             )) and not seen["fatal"] and result["host_seconds"] >= args.seconds
             cloud.save(args.evidence / "qemu-result.json", result)
