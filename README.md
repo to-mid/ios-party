@@ -1,17 +1,54 @@
 # ios-party
 
-小米 MIX 2（chiron / MSM8998）的实验性 XNU / iOS 移植源码。
-当前默认分支 `codex/hackios-chiron` 保存 HackiOS 8796 路线；
-`codex/chiron-source-trace` 保留此前 10063 基线。
-这是开发项目，尚不是可日用的 iOS ROM。
+小米 MIX 2（chiron）的 XNU / iOS 移植实验工程。目标设备为 6 GB / 128 GB 配置，实测 SoC 修订 2.1、Synaptics 触控、JDI video 面板。
 
-本仓库不提供 Apple 原版系统文件；公开工作流不会上传 Apple 系统卷。
-原始贡献的许可为 [BSD-2-Clause-Patent](LICENSE)，上游源码和补丁保留各自许可，
-见 [第三方与发布范围说明](NOTICE.md)。
+默认发布分支 `codex/hackios-chiron` 保存 HackiOS 8796 路线，`codex/chiron-source-trace` 保留此前 10063 基线；触摸与 SMP 组合源码位于 `codex/chiron-parallel-drivers`。
+原始贡献采用 [BSD-2-Clause-Patent](https://github.com/to-mid/ios-party/blob/codex/hackios-chiron/LICENSE)，上游源码和补丁保留各自许可，见[第三方与发布范围说明](https://github.com/to-mid/ios-party/blob/codex/hackios-chiron/NOTICE.md)。仓库及公开构建附件不提供 Apple 原版系统卷。
 
-基于 UniXNU 与 MSM8998 EDK2 的设备移植工程。目标设备为小米 MIX 2 6 GB / 128 GB，实测 SoC 修订 2.1、Synaptics 触控、JDI video 面板。
+当前桌面路线基于固定版本的 HackiOS XNU 8796、iOS 16.5 / 20F66 用户态配方及 MSM8998 EDK2，并加入 MIX 2 的启动、USB、内存、触摸和 SMP 适配。早期 UniXNU / DarwinBoot / native 4 KiB 最小用户态路线保留为独立基线；两条路线的启动、ABI 和运行结果分别记录。
 
-2026-10-22，实机照片 `IMG_20261022_162407.jpg` 已显示构建 `CT-39745321134-1-783CC7E68F24` 和多轮 `CHIRON RAM init: PID 1, 4K ABI, heartbeat`，确认 MIX 2 上的最小 4 KiB XNU 与自有用户态 PID 1 已运行。尚未生成完整 iOS 用户态或可日常使用的系统。早期 CPU 页大小能力与 GOP 参数见 [UEFI 探针记录](research/CHIRON_UEFI_PROBE.zh-CN.md)。
+## 当前状态
+
+更新于 2026-10-29；最近记录的实机反馈为 2026-10-27。已有 iOS 桌面、真实触摸和八核组合的实机成功反馈，项目仍处于实验阶段。
+
+| 能力 | 已有结果 | 证据与边界 |
+| --- | --- | --- |
+| iOS 桌面与单核真实触摸 | 实现了真实触摸与可见桌面操作，持续采样及 iOS 消费日志匹配 | 单核构建 `40327776076`；仍明显卡顿，未证明流畅或长期稳定 |
+| 双核触摸组合 | 完成编译、打包，实测运行正常 | 构建 `40434498916`；该次实测尚未补充独立运行日志及镜像哈希复核 |
+| 八核触摸组合 | 实现了八核触摸组合，实测确认可用；QEMU 八核上线、双簇共享调度集合、SpringBoard 桌面及 540 秒定时返回通过 | 构建 `40457536115`，运行 `40457857698`，保存证据复核 `40459663351`；八核实机结果来自现场观察，尚未补充对应真机日志及运行镜像哈希复核 |
+| 系统卷与原生存储 | 当前通过驻留 loader 接收匹配的 APFS 系统卷到 RAM | 不代表 MIX 2 原生 UFS 运行路径可用；原生存储仍待独立验证 |
+| 最小 native 4 KiB XNU / 自有 PID 1 | 真机心跳及四项最小用户态自检已有记录 | 属于早期 UniXNU 路线，不替代 HackiOS 桌面、多核或完整系统资格 |
+
+触摸细节见 [Synaptics 记录](research/CHIRON_HACKIOS_TOUCH.zh-CN.md)，多核调度修复、QEMU 与实机观察见 [SMP 记录](research/CHIRON_HACKIOS_SMP.zh-CN.md)。运行证据总览见 [运行状态](RUNTIME_STATUS.md)，快速迭代和交付约定见 [单轮修改与交付](research/CHIRON_ITERATION.zh-CN.md)。
+
+## 实验发布与构建入口
+
+已发布 [单核 / 双核 / 八核触摸实验包](https://github.com/to-mid/ios-party/releases/tag/chiron-touch-smp-20261027)，原 [单核触摸发布](https://github.com/to-mid/ios-party/releases/tag/chiron-touch-20261026) 保留。各包具有独立的镜像、manifest、上传脚本、说明和校验文件；八核包另含 QEMU 复核与桌面截图。
+
+发布时的八核说明写作“真机待验”；后续 2026-10-27 实测确认最新八核可用，补充证据记录在 SMP 文档中。当前文件更新不自动修改 GitHub Release 正文或 UniXNU 官网。
+
+附件不包含 Apple 大系统卷、私人设备日志或凭据。使用者自行准备匹配的 `system.apfs`，按包内说明核验并操作；手机约 300 秒返回 loader 是实验设置。发布不代表日常可用、流畅拖动或长期稳定。
+
+| 修改范围 | 现有入口 | 源码分支 |
+| --- | --- | --- |
+| HackiOS 原配方云端参考验证 | `.github/workflows/hackios-reference.yml` | `codex/hackios-8796-20f66` |
+| MIX 2 基础平台内核与 loader | `.github/workflows/hackios-chiron.yml` | `codex/hackios-chiron` |
+| 触摸、SMP 及组合源码构建 | `.github/workflows/hackios-chiron-drivers.yml` | `codex/chiron-parallel-drivers` |
+| 基础候选 / 驱动实验打包 | `.github/workflows/hackios-chiron-package.yml` / `hackios-chiron-driver-images.yml` | `codex/hackios-chiron` / `codex/chiron-parallel-drivers` |
+| 八核双簇独立 QEMU 与保存证据复核 | `.github/workflows/hackios-chiron-smp-qemu.yml` | `codex/chiron-parallel-drivers` |
+| HK 系列本地校验与交付 | `tools/deliver_chiron_hackios.py` | 本地交付工具，未随本次文档同步发布 |
+
+完整内核编译和运行验证在云端执行，本机仅做轻量检查、必要产物下载与交付校验。设备临时启动、系统上传、刷写和重启按说明手动执行。
+
+## 早期路线记录（截至 2026-10-23）
+
+以下为早期 UniXNU / RAM init 和首次 HackiOS 候选的阶段快照，后续触摸、多核及发布状态以上方总览和对应模块记录为准。
+
+2026-10-23，独立 HackiOS HK6c 路线实测出现苹果 Logo 后进入桌面，触摸无响应；本次仅有现场观察记录。该实机基线使用单核，未据此授予交互或长期稳定性资格；[Synaptics 触摸](research/CHIRON_HACKIOS_TOUCH.zh-CN.md) 与 [SMP](research/CHIRON_HACKIOS_SMP.zh-CN.md) 已按计划分别推进。多核运行 `39964860075` 的新内核与 loader 均完成链接和产物复核，双核、八核独立临时镜像经运行 `40053115918` 打包并完成本地静态复核，交付于 `dist/chiron-driver-candidates/`，尚无实机多核运行结果。上游导出名单检查限制见 SMP 记录，反馈边界见 [HK6c 记录](research/CHIRON_HACKIOS_MEMORY.zh-CN.md#hk6c-桌面反馈与并行外设工作)。
+
+触摸的原生 QUP/F12、条件接管和只读板级探针已完成源码实现；当前探针内核经运行 `40056688514` 链接，诊断镜像经 `40057611818` 打包并本地复核，交付在 `dist/chiron-driver-candidates/TOUCH-PROBE-40057611818/`。它会在 GUI 前输出寄存器快照并主动 panic，用于取得实机接管状态，尚未声称触摸可用。
+
+2026-10-22，实机照片 `IMG_20261022_162407.jpg` 已显示构建 `CT-39745321134-1-783CC7E68F24` 和多轮 `CHIRON RAM init: PID 1, 4K ABI, heartbeat`，确认 MIX 2 上的最小 4 KiB XNU 与自有用户态 PID 1 已运行。该自有 RAM init 路线仅覆盖最小用户态，不代表完整 iOS 或可日常使用的系统。早期 CPU 页大小能力与 GOP 参数见 [UEFI 探针记录](research/CHIRON_UEFI_PROBE.zh-CN.md)。
 
 此前已在 Cortex-A53 QEMU 中观察到自有 PID 1、4 KiB ABI 和两次真实心跳，并通过实机 `17` 标记确认原始 `arm_vm_init` 返回。当前实机多轮心跳进一步支持 PID/页大小检查、控制台写入和多轮定时等待返回；单张照片不证明长期稳定性，也不单独确定此前停滞的根因。
 
@@ -21,15 +58,15 @@
 
 修正后的云构建 `39745321134` 已通过控制台路径、POST 正反例、PID 1 两次心跳及真实 panic/数据异常资格，并完成打包及本地原始记录/载荷哈希复核。实机心跳对应镜像为 `dist/source-trace-39745321134/CT-39745321134-1-783cc7e68f24.img`，照片证据与完整边界见 [源码可观测性](research/CHIRON_SOURCE_TRACE.zh-CN.md)。
 
-设备操作由用户执行：刷写、临时启动和重启均不由助手操作；助手负责源码、构建、产物校验和日志分析。
+设备刷写、临时启动和重启按说明手动执行；源码、构建、产物校验和日志分析分别记录。
 
-下一阶段已并行实现：[用户态自检](research/CHIRON_USER_SELFTEST.zh-CN.md) 已在真实 XNU/QEMU 完成文件读取、两页匿名映射、独立子程序执行及退出回收，候选镜像为 `dist/source-trace-39756701933/CT-39756701933-1-3b4d3db21117.img`，仍待实机观察 `SELFTEST PASS`。[UFS 只读探针](research/CHIRON_UFS_READONLY.zh-CN.md) 已通过宿主测试和独立 XNU 归档编译；未链接、未执行硬件，仍缺退出 UEFI 后的电源/时钟、链路、DMA/SMMU 及独占交接资格。
+下一阶段已并行实现：[用户态自检](research/CHIRON_USER_SELFTEST.zh-CN.md) 已在真实 XNU/QEMU 完成文件读取、两页匿名映射、独立子程序执行及退出回收。旧候选实机出现 SIGBUS 后，已修正入口栈对齐并验证持久故障快照；修正版 `dist/source-trace-39770335838/CT-39770335838-1-775f3f2e4009.img` 完成云端及本地核验后，实机照片 `IMG_20261022_195153.jpg` 已显示相同构建号和多轮 `HEARTBEAT SELFTEST PASS`，支持四项最小用户态自检在 MIX 2 通过，详见 [SIGBUS 排查](research/CHIRON_SIGBUS_DEBUG.zh-CN.md)。单张照片不证明长期稳定性或旧故障的精确根因。[UFS 只读探针](research/CHIRON_UFS_READONLY.zh-CN.md) 已通过宿主测试和独立 XNU 归档编译；未链接、未执行硬件，仍缺退出 UEFI 后的电源/时钟、链路、DMA/SMMU 及独占交接资格。
 
 首轮内核、驱动库、EFI 和整合固件的远程编译均已通过。成品位置、哈希和验证边界见 [构建记录](BUILD_STATUS.md)。
 
-## 构建方式
+## 早期 UniXNU / RAM init 构建
 
-GitHub Actions 工作流 `Chiron remote bring-up` 在源码推送时仅跑轻量验证；真正的编译任务仅手动触发：
+本节保留早期路线的构建方式，HackiOS 桌面与触摸/SMP 候选使用上方独立入口。GitHub Actions 工作流 `Chiron remote bring-up` 在源码推送时仅跑轻量验证；真正的编译任务仅手动触发：
 
 - Linux runner 编译 AArch64 UniXNU、DarwinBoot 和 MSM8998 固件。
 - macOS runner 编译 4 KiB XNU 源内核与平台驱动静态库。
@@ -58,7 +95,7 @@ python3 -m unittest discover -s tests -v
 python3 scripts/make-chiron-adt.py --output out/chiron/chiron.adt
 ```
 
-## 当前产物的边界
+## 早期 bootstrap 产物的边界
 
 `configs/chiron_defconfig` 是第一轮源代码 bootstrap 配置。CPU、平台和密码学等外部库尚未链接进内核；原始内核不能直接作为 DarwinBoot 的完整 XNU payload 使用。
 
@@ -79,6 +116,9 @@ ADT 使用真实 chiron 身份、单核、SMC、GICv3 和易失 NVRAM，不包�
 | `scripts/make-chiron-adt.py` | 最小 Apple Device Tree 生成器 |
 | `drivers/ArmCpu/` | 上游 BSD 驱动及 chiron 定时器适配 |
 | `ci/sources.json` | 固定的上游源码提交 |
+| `ci/hackios/` | HackiOS 平台、触摸、SMP 覆盖层及构建/打包实现 |
+| `drivers/chiron-touch/` | QUP / Synaptics DSX 协议、板级接管与 XNU 适配 |
+| `research/hackios-reuse/sources.lock.json` | HackiOS、ios-sweet 参考及 XNU 的固定来源版本 |
 | `ci/` | 远程构建、集成与产物校验 |
 | `tests/` | ADT 资源、NVRAM 和产物架构检查 |
 | `tools/` | boot 镜像解析、ADB 只读采集和 FDT/GPT 校验 |
@@ -88,6 +128,12 @@ ADT 使用真实 chiron 身份、单核、SMC、GICv3 和易失 NVRAM，不包�
 
 ## 研究记录
 
+- [当前运行状态](RUNTIME_STATUS.md)
+- [Synaptics 触摸与实机反馈](research/CHIRON_HACKIOS_TOUCH.zh-CN.md)
+- [SMP、双簇调度及八核运行证据](research/CHIRON_HACKIOS_SMP.zh-CN.md)
+- [USB 接管](research/CHIRON_HACKIOS_USB.zh-CN.md)
+- [连续内存窗口与首次桌面反馈](research/CHIRON_HACKIOS_MEMORY.zh-CN.md)
+- [单轮修改与交付](research/CHIRON_ITERATION.zh-CN.md)
 - [移植评估](research/MIX2_PORTING.zh-CN.md)
 - [boot.img 静态分析](research/CHIRON_BOOT_ANALYSIS.zh-CN.md)
 - [ADB 实机采集分析](research/CHIRON_LIVE_ANALYSIS.zh-CN.md)

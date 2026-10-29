@@ -1,4 +1,31 @@
-# 首轮远程构建结果
+# MIX 2 构建状态
+
+更新于 2026-10-29。当前桌面候选属于独立 HackiOS 路线；
+下方首轮 UniXNU bootstrap 构建记录保留原有日期与边界。
+
+## 当前触摸与 SMP 构建
+
+| 候选 | 源构建 / 镜像构建 | 已有验证 |
+| --- | --- | --- |
+| 单核真实触摸 | 内核 `40312563263`；输入库与镜像 `40327776076` | 编译、静态交付、可见触摸及持续采样通过；仍卡顿 |
+| 双核触摸 | `40433616294` / `40434498916` | 内核/loader 链接、打包与静态交付通过；实测运行正常，尚未补充独立运行日志 |
+| 八核触摸 | `40457193107` / `40457536115` | 内核/loader 链接、打包与静态交付通过；独立 QEMU 桌面运行通过，后续另经实测确认可用 |
+
+八核实际 QEMU 为 `40457857698`，保存证据复核为 `40459663351`，
+后者未重复执行内核。两簇共享 pset0、CPU1–CPU7 上线、桌面与 540 秒定时返回
+由该次模拟器运行支持，不作为手机硬件资格。
+八核内核未定义符号为空；原总 make 仍为 2，不能写为全部上游导出目标通过。
+
+单核/双核/八核实验包已发布为 `chiron-touch-smp-20261027`，
+各镜像及 manifest 独立保留。八核镜像为
+`dist/chiron-driver-candidates/TOUCH-SMP8-QOS-40457536115/MIX2-EXPERIMENTAL-TOUCH-SMP8-QOS.img`，
+SHA-256 `75dce1f23799a71500228ef0bb23a92fd3900650ab2ba9addc0f0b7e113c465f`。
+
+完整来源、调度修复和发布校验见 [SMP 记录](research/CHIRON_HACKIOS_SMP.zh-CN.md)；
+手机反馈与 QEMU 的分别记录见 [运行状态](RUNTIME_STATUS.md)。
+本次仅更新文档，没有重新构建、打包或执行运行验证。
+
+## 首轮远程构建结果（历史）
 
 日期：2026-10-20。私有仓库：`to-mid/ios-party`，分支：`codex/chiron-bringup`。
 
@@ -63,7 +90,7 @@ UEFI 探针现已成功执行，启动核心的 4 KiB 能力与 GOP 参数已记
 
 ## 首次临时启动
 
-2026-10-20，用户报告进入 fastboot，USB 实测 product 为 `chiron`，bootloader 和 critical 均报告已解锁，最大传输大小为 536,870,912 字节。
+2026-10-20，实测进入 fastboot，USB product 为 `chiron`，bootloader 和 critical 均报告已解锁，最大传输大小为 536,870,912 字节。
 
 对上述 SHA-256 的实验镜像执行了一次 `fastboot boot`：
 
@@ -73,7 +100,7 @@ Booting                     OKAY [0.001s]
 Finished. Total time: 0.040s
 ```
 
-之后 fastboot 设备列表为空。随后用户报告成功进入 UEFI，并提供了探针照片：可见 EL1 寄存器输出和等待按键，确认 ChironProbe 已执行。启动 CPU 的 TGran4=0、TGran16=0；GOP 为 1080×2160、pitch=1080、base=`0x9d400000`。详细转录见 [UEFI 探针观察](research/CHIRON_UEFI_PROBE.zh-CN.md)。
+之后 fastboot 设备列表为空。随后实测记录成功进入 UEFI，并提供了探针照片：可见 EL1 寄存器输出和等待按键，确认 ChironProbe 已执行。启动 CPU 的 TGran4=0、TGran16=0；GOP 为 1080×2160、pitch=1080、base=`0x9d400000`。详细转录见 [UEFI 探针观察](research/CHIRON_UEFI_PROBE.zh-CN.md)。
 
 仍未确认 XNU 运行。未执行分区刷写或擦除命令。原始命令输出位于 `research/artifacts/chiron-firstboot-20261020/fastboot-boot.log`。
 
